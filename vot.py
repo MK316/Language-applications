@@ -88,9 +88,7 @@ if audio:
     except Exception as e:
         st.error(f"오디오 처리 중 오류가 발생했습니다: {e}")
 
-else:
-    with col2:
-# 기존 코드의 else 부분을 다음과 같이 수정
+
 else:
     with col2:
         st.write("---")
