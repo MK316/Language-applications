@@ -11,7 +11,7 @@ from pydub import AudioSegment
 st.set_page_config(page_title="Linguistic Pronunciation Visualizer", layout="wide")
 
 st.title("🗣️ AI-Mediated Linguistic Analysis")
-st.subheader("Precision Analysis for Voice Onset Time (VOT)")
+st.subheader("Analysis for Voice Onset Time (VOT)")
 st.caption("Instructions: Record words like 'pie, bye, spy' and measure the aspiration gap.")
 
 # 2. 상단: 안내 및 녹음 컨트롤
