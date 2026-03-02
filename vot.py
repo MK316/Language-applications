@@ -5,24 +5,17 @@ import librosa.display
 import matplotlib.pyplot as plt
 import numpy as np
 import io
+from pydub import AudioSegment  # 포맷 변환을 위해 추가
 
-st.set_page_config(page_title="English Pronunciation Visualizer", layout="wide")
+st.set_page_config(page_title="Linguistic Visualizer", layout="wide")
 
 st.title("🗣️ AI-Mediated Linguistic Analysis")
-st.subheader("Analyze your Voice Onset Time (VOT) and Pitch Patterns")
+st.write("Record your voice to analyze VOT and Pitch patterns. (iOS/Android Compatible)")
 
-st.write("""
-This tool helps you visualize your pronunciation patterns. 
-Record your voice (e.g., saying words like 'Pat' vs 'Bat') to see the acoustic differences.
-""")
-
-# 레이아웃 분할
 col1, col2 = st.columns([1, 2])
 
 with col1:
-    st.info("📱 Mobile Users: Tap 'Start Recording' and allow microphone access.")
-    
-    # 오디오 레코더 설정 (아이폰/안드로이드 호환을 위해 고안됨)
+    # 아이폰 호환성을 위해 mic_recorder를 사용
     audio = mic_recorder(
         start_prompt="⏺️ Start Recording",
         stop_prompt="⏹️ Stop Recording",
@@ -30,51 +23,39 @@ with col1:
     )
 
 if audio:
-    # 녹음된 데이터를 바이너리 형태로 읽기
-    audio_bio = io.BytesIO(audio['bytes'])
-    
-    with col2:
-        st.success("Audio captured successfully!")
-        st.audio(audio_bio)
+    try:
+        # 1. 아이폰의 특수 포맷 데이터를 읽기 위해 BytesIO 생성
+        audio_bytes = audio['bytes']
+        audio_bio = io.BytesIO(audio_bytes)
         
-        # Librosa를 이용한 음성 분석
-        try:
-            # 오디오 로드 (Librosa는 다양한 포맷을 자동으로 처리)
-            y, sr = librosa.load(audio_bio, sr=None)
+        # 2. pydub를 사용하여 데이터를 범용적인 wav로 변환 (아이폰 .webm 대응)
+        # 이 과정에서 오디오 포맷을 자동으로 인식하여 처리합니다.
+        audio_segment = AudioSegment.from_file(audio_bio)
+        
+        # 분석을 위해 다시 BytesIO에 wav로 저장
+        wav_bio = io.BytesIO()
+        audio_segment.export(wav_bio, format="wav")
+        wav_bio.seek(0)
+
+        with col2:
+            st.success("Analysis Complete!")
+            st.audio(audio_bytes) # 원본 오디오 재생
             
-            # 1. 파형(Waveform) 시각화
+            # 3. Librosa로 로드 (wav 포맷이므로 이제 안전하게 읽힙니다)
+            y, sr = librosa.load(wav_bio, sr=None)
+            
+            # 시각화 코드 (이전과 동일)
             fig, ax = plt.subplots(2, 1, figsize=(10, 8))
-            
-            librosa.display.waveshow(y, sr=sr, ax=ax[0], color="blue")
+            librosa.display.waveshow(y, sr=sr, ax=ax[0], color="teal")
             ax[0].set_title("Waveform (Check for Aspiration & VOT)")
-            ax[0].set_xlabel("Time (s)")
             
-            # 2. 스펙트로그램(Spectrogram) 시각화
             D = librosa.amplitude_to_db(np.abs(librosa.stft(y)), ref=np.max)
-            img = librosa.display.specshow(D, sr=sr, x_axis='time', y_axis='hz', ax=ax[1])
-            ax[1].set_title("Spectrogram (Voice Energy Patterns)")
-            fig.colorbar(img, ax=ax[1], format="%+2.0f dB")
+            librosa.display.specshow(D, sr=sr, x_axis='time', y_axis='hz', ax=ax[1])
+            ax[1].set_title("Spectrogram")
             
             plt.tight_layout()
             st.pyplot(fig)
-            
-            # 분석 팁 제공
-            st.markdown("""
-            **🔍 How to analyze:**
-            - **VOT (Voice Onset Time):** Look for the gap between the release of the consonant (burst) and the start of the periodic vocal fold vibration.
-            - **Intensity:** Higher peaks represent stronger aspiration or stress.
-            """)
-            
-        except Exception as e:
-            st.error(f"Error processing audio: {e}")
-else:
-    with col2:
-        st.warning("Awaiting recording... Please record your voice in the left panel.")
 
-# 🏛️ Theoretical Connection (Scaffolding)
-with st.expander("Theoretical Background"):
-    st.write("""
-    This app serves as a **scaffolding tool** for linguistic analysis. 
-    By visualizing abstract acoustic data, students can bridge the gap between 
-    **Difficulty** (perceiving subtle sound differences) and **Depth** (understanding phonetic features).
-    """)
+    except Exception as e:
+        st.error(f"Error processing audio: {e}")
+        st.info("Tip: If you're on iPhone, ensure your silent mode is off and try again.")
