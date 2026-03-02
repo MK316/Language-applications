@@ -11,13 +11,13 @@ from pydub import AudioSegment
 st.set_page_config(page_title="Linguistic Pronunciation Visualizer", layout="wide")
 
 st.title("🗣️ AI-Mediated Linguistic Analysis")
-st.subheader("Precision Analysis: Explore Acoustic Patterns in Full-Width")
+st.subheader("VOT: Voice Onset Time")
 
 # 1. 상단: 안내 및 녹음 컨트롤 (Center Aligned)
 top_col1, top_col2, top_col3 = st.columns([1, 2, 1])
 
 with top_col2:
-    st.info("📱 **Mobile Tip**: 아이폰 사용자는 반드시 **무음 스위치(Silent Mode)**를 해제해 주세요.")
+    st.info("📱 **Mobile Tip**: 아이폰 사용자는 반드시 **Silent Mode** 해제")
     
     # 녹음 컨트롤러를 중앙에 배치
     audio = mic_recorder(
