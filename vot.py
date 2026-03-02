@@ -12,6 +12,7 @@ st.set_page_config(page_title="Linguistic Pronunciation Visualizer", layout="wid
 
 st.title("🗣️ AI-Mediated Linguistic Analysis")
 st.subheader("Target: Voice Onset Time (VOT)")
+st.caption("Say 'pie, bye, spy'")
 
 # 1. 상단: 안내 및 녹음 컨트롤
 top_col1, top_col2, top_col3 = st.columns([1, 2, 1])
