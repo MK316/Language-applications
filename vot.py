@@ -131,7 +131,7 @@ else:
 st.divider()
 st.markdown("""
 ### 🏛️ Pedagogical Framework
-* **Difficulty to Depth**: 음성 신호라는 복잡한(Difficulty) 데이터를 시각화하고 구간을 직접 제어함으로써, 추상적인 음성학 지식을 깊이 있는(Depth) 분석적 이해로 전환합니다.
-* **Temporal Alignment**: 파형과 스펙트로그램의 시간축을 일치시켜 데이터의 **시각적 신뢰성**을 확보하였습니다.
-* **Engagement**: 학습자가 직접 슬라이더를 움직여 VOT를 측정하는 행위는 지식의 수동적 수용이 아닌 **능동적 탐구(Agency)를** 유도합니다.
+* **Difficulty to Depth**: 음성 신호라는 복잡한(Difficulty) 데이터를 시각화하고 구간을 직접 제어함으로써, 추상적인 음성학 지식을 깊이 있는(Depth) 분석적 이해로 전환.
+* **Temporal Alignment**: 파형과 스펙트로그램의 시간축을 일치시켜 데이터의 **시각적 신뢰성**을 확보.
+* **Engagement**: 학습자가 직접 슬라이더를 움직여 VOT를 측정하는 행위는 지식의 수동적 수용이 아닌 **능동적 탐구(Agency)를** 유도.
 """)
