@@ -18,7 +18,7 @@ st.caption("Instructions: Record words like 'pie, bye, spy' and measure the aspi
 top_col1, top_col2, top_col3 = st.columns([1, 2, 1])
 
 with top_col2:
-    st.info("📱 **Mobile Tip**: 아이폰 사용자는 기기 옆면의 **Silent Mode(무음 스위치)**를 해제해 주세요.")
+    st.info("📱 **Mobile Tip**: 아이폰 사용자는 기기 옆면의 **Silent Mode**를 해제해 주세요.")
     audio = mic_recorder(
         start_prompt="⏺️ 녹음 시작 (Start Recording)",
         stop_prompt="⏹️ 녹음 중지 (Stop Recording)",
