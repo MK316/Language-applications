@@ -90,5 +90,11 @@ if audio:
 
 else:
     with col2:
-        st.image("https://via.placeholder.com/800x400.png?text=Waiting+for+Voice+Input...", use_column_width=True)
-        st.write("왼쪽에서 녹음을 마치면 구간 선택 슬라이더와 분석 도표가 나타납니다.")
+# 기존 코드의 else 부분을 다음과 같이 수정
+else:
+    with col2:
+        st.write("---")
+        # 이미지 대신 아이콘이 포함된 메시지 박스 사용
+        st.info("👈 왼쪽에서 녹음을 시작하면 분석 도표가 이곳에 나타납니다.")
+        # 공간을 확보하고 싶다면 비어있는 컨테이너 활용
+        st.container(height=300)
