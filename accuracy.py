@@ -12,10 +12,10 @@ from difflib import SequenceMatcher
 # --- 유틸리티 함수 ---
 
 def get_net_speaking_time(audio_path):
-    """무음 구간을 제외한 실제 발화 시간 계산 (노이즈 방지 임계값 적용)"""
+    """무음 구간을 제외한 실제 발화 시간 계산"""
     try:
         audio = AudioSegment.from_file(audio_path)
-        # -35dB 이하를 무음으로 간주 (숨소리 등 잡음 제거)
+        # -35dB 이하를 무음으로 간주하여 잡음 방어
         nonsilent_chunks = detect_nonsilent(audio, min_silence_len=100, silence_thresh=-35)
         if not nonsilent_chunks: return 0
         return sum([end - start for start, end in nonsilent_chunks]) / 1000.0
@@ -56,7 +56,7 @@ st.subheader("1단계: 실용 표현 선택하기 (Level 01~20)")
 selected_level = st.selectbox("학습 단계를 선택하세요:", list(sample_sentences.keys()))
 target_text = sample_sentences[selected_level]
 
-# 문장 박스 시각화
+# 문장 박스 시각화 (간격 70px 확보)
 st.markdown(f"""
     <div style="border: 2px solid #1f77b4; border-radius: 12px; padding: 35px; 
                 background-color: #f8f9fb; text-align: center; margin-bottom: 70px;
@@ -75,19 +75,17 @@ if audio:
         # 오디오 데이터 처리 및 WAV 변환
         audio_stream = io.BytesIO(audio['bytes'])
         learner_raw = AudioSegment.from_file(audio_stream)
-        
-        # 무음 제거 (타이트하게 절단)
         learner_raw = learner_raw.strip_silence(silence_thresh=-35, padding=50)
         learner_raw.export("temp_learner.wav", format="wav")
         
-        # 원어민 TTS 생성 및 변환
+        # 원어민 TTS 생성
         tts = gTTS(text=target_text, lang='en')
         tts.save("temp_native.mp3")
         native_raw = AudioSegment.from_file("temp_native.mp3", format="mp3")
         native_raw = native_raw.strip_silence(silence_thresh=-35, padding=50)
         native_raw.export("temp_native.wav", format="wav")
 
-        # 시간 및 오디오 로드
+        # 시간 분석 및 데이터 로드
         learner_net_time = get_net_speaking_time("temp_learner.wav")
         native_net_time = get_net_speaking_time("temp_native.wav")
         y_learner, sr_l = librosa.load("temp_learner.wav", sr=22050)
@@ -121,14 +119,14 @@ if audio:
             c2.metric("원어민 시간", f"{native_net_time:.2f}초")
             c3.metric("속도 비율", f"{int(ratio)}%")
             
-            if 90 <= ratio <= 125: st.success("✅ 적절한 속도입니다.")
-            elif ratio < 90: st.warning("🚀 다소 빠릅니다. 연음을 더 살려보세요.")
+            if 90 <= ratio <= 125: st.success("✅ 자연스러운 속도입니다.")
+            elif ratio < 90: st.warning("🚀 발화 속도가 빠릅니다. 억양을 더 살려보세요.")
             else: st.info("🐢 단어 연결(Linking)을 더 매끄럽게 해보세요.")
 
         with tab3:
             st.subheader("강세와 리듬 (Waveform)")
             st.audio("temp_learner.wav"); st.audio("temp_native.mp3")
-            fig1, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 4), sharex=True)
+            fig1, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 4), sharex=False)
             librosa.display.waveshow(y_native, sr=sr_l, ax=ax1, color='lightgray')
             ax1.set_title("Native Speaker Waveform")
             librosa.display.waveshow(y_learner, sr=sr_l, ax=ax2, color='skyblue')
@@ -137,28 +135,36 @@ if audio:
             st.pyplot(fig1)
 
         with tab4:
-            st.subheader("억양 멜로디 (Pitch Contour)")
+            st.subheader("억양 멜로디 (좌: 원어민, 우: 나)")
             st.audio("temp_learner.wav"); st.audio("temp_native.mp3")
             
-            # 피치 추출 (voiced_threshold 인자 제외)
+            # 피치 추출 (fmin 조절로 원어민 피치 왜곡 방어)
             f0_l, voiced_l, v_probs_l = librosa.pyin(y_learner, fmin=90, fmax=400)
             f0_n, voiced_n, v_probs_n = librosa.pyin(y_native, fmin=90, fmax=400)
             
-            # [고스트 피치 제거 로직] 확실한 유성음 구간만 필터링
+            # 필터링 로직: 유성음 확률 0.6 이상, 피치 95Hz 이상만 유효
             valid_l = voiced_l & (v_probs_l > 0.6) & (f0_l > 95)
             valid_n = voiced_n & (v_probs_n > 0.6) & (f0_n > 95)
 
-            fig2, ax = plt.subplots(figsize=(12, 5))
-            ax.plot(librosa.times_like(f0_n)[valid_n], f0_n[valid_n], 'o--', 
-                    label='Native', color='lightgray', markersize=3, alpha=0.6)
-            ax.plot(librosa.times_like(f0_l)[valid_l], f0_l[valid_l], 'o--', 
-                    label='You', color='#1f77b4', markersize=4)
+            # [핵심] 좌우 나열형 시각화 (Subplots 1x2)
+            fig2, (ax_n, ax_l) = plt.subplots(1, 2, figsize=(15, 5), sharey=True)
             
-            ax.set_ylim([80, 400])
-            ax.set_ylabel("Frequency (Hz)")
-            ax.legend()
+            # 왼쪽: 원어민 (Native)
+            ax_n.plot(librosa.times_like(f0_n)[valid_n], f0_n[valid_n], 'o--', 
+                      label='Native', color='lightgray', markersize=3)
+            ax_n.set_title("Native Speaker Intonation")
+            ax_n.set_ylim([80, 400])
+            ax_n.set_ylabel("Frequency (Hz)")
+            
+            # 오른쪽: 학생 (You)
+            ax_l.plot(librosa.times_like(f0_l)[valid_l], f0_l[valid_l], 'o--', 
+                      label='You', color='#1f77b4', markersize=4)
+            ax_l.set_title("Your Intonation")
+            ax_l.set_ylim([80, 400])
+            
+            plt.tight_layout()
             st.pyplot(fig2)
-            st.caption("※ 실제 발화가 시작된 유성음 구간만 표시됩니다.")
+            st.caption("※ 왼쪽 원어민의 곡선을 참고하여 오른쪽 자신의 억양 패턴을 비교해 보세요.")
 
     except Exception as e:
         st.error(f"오류 발생: {e}")
