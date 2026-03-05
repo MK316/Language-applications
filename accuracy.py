@@ -19,39 +19,49 @@ def get_net_speaking_time(audio_path):
 # --- 스트림릿 설정 ---
 st.set_page_config(page_title="AI 발음 분석기", layout="wide")
 
-# [수정] 유성음 비율 80% 이상, 자연스러운 문장 10단계
+# [수정] 실용적이고 자연스러운 유성음 중심 문장 20선
 sample_sentences = {
-    "Level 1: 모음의 흐름": "All in line.",
-    "Level 2: 비음의 울림": "Morning is near.",
-    "Level 3: 유음과 비음": "Learning is mainly online.",
-    "Level 4: 부드러운 연결": "Rainy morning on Monday.",
-    "Level 5: 의문문 억양": "Where are you roaming now?",
-    "Level 6: 감정의 고조": "I am really moving on.",
-    "Level 7: 유성 마찰음": "Love always wins over all.",
-    "Level 8: 긴 호흡 연결": "Early morning running is narrow.",
-    "Level 9: 복합 유성음": "Millions are zooming in on me.",
-    "Level 10: 최종 도전": "Normal morning reveals a yellow moon."
+    "Level 01: (인사/기초)": "I am on my way.",
+    "Level 02: (일상/기초)": "Nice room you have.",
+    "Level 03: (일상/기초)": "Dinner is ready now.",
+    "Level 04: (일상/기초)": "Leave a message online.",
+    "Level 05: (캠퍼스/기초)": "Our classroom is really warm.",
+    "Level 06: (캠퍼스/기초)": "No one knows my name here.",
+    "Level 07: (일상/중급)": "Running alone is always fine.",
+    "Level 08: (비즈니스/중급)": "Email me any minor news.",
+    "Level 09: (비즈니스/중급)": "My main revenue is moving up.",
+    "Level 10: (일상/주어 확장)": "Millions of men are moving online.",
+    "Level 11: (캠퍼스/주어 확장)": "Learning a new language is normal now.",
+    "Level 12: (비즈니스/주어 확장)": "All our managers are in a long meeting.",
+    "Level 13: (일상/연결 확장)": "Early morning jogging is my main manner.",
+    "Level 14: (캠퍼스/연결 확장)": "Our long moonlit journey remains in my mind.",
+    "Level 15: (대학/학술)": "Online learning remains a main avenue in our era.",
+    "Level 16: (대학/학술)": "Modern laws remain relevant in our human memory.",
+    "Level 17: (비즈니스/심화)": "Managing a small loan is always a main worry.",
+    "Level 18: (대학/심화)": "Meaningful rumors are looming on the rainy river.",
+    "Level 19: (고급/실무)": "Maintaining a warm memory lowers our lonely alarm.",
+    "Level 20: (대학/고급)": "Enormous animal roaming remains a normal human alarm."
 }
 
-st.title("🎙️ AI-Native 발음 & 유창성 클리닉")
+st.title("🎙️ AI-Native 실용 발음 & 유창성 클리닉")
 
 # --- Step 1: 문장 선택 ---
-st.subheader("1단계: 연습할 문장 선택하기")
-selected_level = st.selectbox("난이도를 선택하세요 (1~10):", list(sample_sentences.keys()))
+st.subheader("1단계: 실용 표현 선택하기 (Level 01~20)")
+selected_level = st.selectbox("학습 단계를 선택하세요:", list(sample_sentences.keys()))
 target_text = sample_sentences[selected_level]
 
-# [수정] 문장 박스와 아래 요소 사이의 간격(margin-bottom)을 넓힘
+# 문장 박스 (CSS 간격 최적화)
 st.markdown(f"""
-    <div style="border: 2px solid #1f77b4; border-radius: 10px; padding: 25px; 
-                background-color: #f0f2f6; text-align: center; margin-bottom: 50px;">
-        <h2 style="color: #1f77b4; margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
+    <div style="border: 2px solid #1f77b4; border-radius: 12px; padding: 35px; 
+                background-color: #f8f9fb; text-align: center; margin-bottom: 70px;
+                box-shadow: 2px 2px 10px rgba(0,0,0,0.05);">
+        <h2 style="color: #1f77b4; margin: 0; font-family: 'Segoe UI', sans-serif; font-weight: 600;">
             "{target_text}"
         </h2>
     </div>
     """, unsafe_allow_html=True)
 
 # --- Step 2: 녹음 ---
-# 간격이 확보된 상태에서 녹음 버튼이 나타남
 audio = mic_recorder(start_prompt="🎤 녹음 시작", stop_prompt="🛑 녹음 완료", key="recorder")
 
 if audio:
@@ -71,32 +81,42 @@ if audio:
         y_learner, sr_l = librosa.load("temp_learner.wav", sr=22050)
         y_native, _ = librosa.load("temp_native.wav", sr=sr_l)
 
-        tab1, tab2, tab3, tab4 = st.tabs(["🎯 인식 결과", "⏱️ 유창성 분석", "🔊 음파 대조", "📈 피치 분석"])
+        # 탭 구성
+        tab1, tab2, tab3, tab4 = st.tabs(["🎯 AI 점수", "⏱️ 유창성 분석", "🔊 음파 대조", "📈 피치 분석"])
 
         with tab1:
-            st.subheader("AI 피드백")
+            st.subheader("인식 결과 및 정확도")
             r = sr.Recognizer()
             with sr.AudioFile("temp_learner.wav") as source:
                 audio_data = r.record(source)
                 try:
                     transcript = r.recognize_google(audio_data, language='en-US')
-                    score = SequenceMatcher(None, target_text.lower().replace('.', ''), transcript.lower()).ratio()
+                    # 구두점 제거 후 비교
+                    clean_target = target_text.lower().replace('.', '').replace(',', '').replace('?', '')
+                    clean_transcript = transcript.lower()
+                    score = SequenceMatcher(None, clean_target, clean_transcript).ratio()
+                    
                     c1, c2 = st.columns([1, 2])
                     c1.metric("정확도 점수", f"{int(score * 100)}점")
-                    c2.success(f"**인식 결과:** {transcript}")
-                    st.info("💡 옆의 **[⏱️ 유창성 분석]** 탭에서 속도를 확인해보세요!")
-                except: st.error("인식 실패")
+                    c2.success(f"**AI 인식 결과:** {transcript}")
+                    st.info("💡 **Tip:** 점수 확인 후, 옆의 **[⏱️ 유창성 분석]** 탭에서 내 속도를 체크해 보세요!")
+                except: st.error("인식 실패. 더 크고 명확하게 읽어보세요.")
 
         with tab2:
-            st.subheader("발화 속도 분석")
+            st.subheader("발화 속도(Fluency) 분석")
             ratio = (learner_net_time / native_net_time) * 100 if native_net_time > 0 else 0
             c1, c2, c3 = st.columns(3)
             c1.metric("내 발화 시간", f"{learner_net_time:.2f}초")
             c2.metric("원어민 시간", f"{native_net_time:.2f}초")
             c3.metric("속도 비율", f"{int(ratio)}%")
-            st.caption("※ 무음 구간을 제외한 순수 스피치 구간만 측정되었습니다.")
+            
+            st.write("### 속도 가이드")
+            if 90 <= ratio <= 125: st.success("✅ **Great!** 자연스러운 속도입니다.")
+            elif ratio < 90: st.warning("🚀 **Fast!** 조금만 더 천천히, 리듬을 타보세요.")
+            else: st.info("🐢 **Slow!** 단어들을 더 매끄럽게 연결(Linking)해보세요.")
 
         with tab3:
+            st.subheader("강세와 리듬 (Waveform)")
             st.audio("temp_learner.wav"); st.audio("temp_native.mp3")
             fig1, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 4), sharex=True)
             librosa.display.waveshow(y_native, sr=sr_l, ax=ax1, color='lightgray')
@@ -104,7 +124,7 @@ if audio:
             st.pyplot(fig1)
 
         with tab4:
-            st.subheader("피치 점선 비교 (나열형)")
+            st.subheader("억양 멜로디 (Pitch Contour)")
             st.audio("temp_learner.wav"); st.audio("temp_native.mp3")
             f0_l, voiced_l, _ = librosa.pyin(y_learner, fmin=70, fmax=400)
             f0_n, voiced_n, _ = librosa.pyin(y_native, fmin=70, fmax=400)
@@ -117,3 +137,11 @@ if audio:
     finally:
         for f in ["temp_native.mp3", "temp_native.wav", "temp_learner.wav"]:
             if os.path.exists(f): os.remove(f)
+
+# 사이드바 가이드
+st.sidebar.markdown("""
+### 🏛️ 학습 가이드
+1. **Level 01-09**: 생활 밀착형 기초 표현
+2. **Level 10-14**: 업무 및 캠퍼스 활용 표현
+3. **Level 15-20**: 심화 학술 및 전문적 표현
+""")
