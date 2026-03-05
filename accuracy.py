@@ -54,7 +54,7 @@ main_container = st.container()
 
 with main_container:
     # 1. 문장 선택 (상단 정렬)
-    selected_level = st.selectbox("학습 단계를 선택하세요:", list(sample_sentences.keys()), 
+    selected_level = st.selectbox("Step 1: 학습 단계를 선택하세요:", list(sample_sentences.keys()), 
                                   on_change=lambda: st.session_state.update({"analysis_done": False}))
     target_text = sample_sentences[selected_level]
 
@@ -73,7 +73,7 @@ with main_container:
         # 버튼을 박스 바로 아래 정중앙에 배치
         rec_col1, rec_col2, rec_col3 = st.columns([1, 1, 1])
         with rec_col2:
-            audio = mic_recorder(start_prompt="🎤 녹음 시작", stop_prompt="🛑 녹음 완료", key="recorder")
+            audio = mic_recorder(start_prompt="🎤 Step 2: 녹음 시작", stop_prompt="🛑 녹음 완료", key="recorder")
 
     # 3. 분석 버튼 (녹음 완료 시 표시)
     if audio:
@@ -81,7 +81,7 @@ with main_container:
         anal_col1, anal_col2, anal_col3 = st.columns([1, 2, 1])
         with anal_col2:
             st.success("✅ 녹음 완료! 아래 버튼을 눌러 분석을 시작하세요.")
-            if st.button("📊 결과 분석하기", use_container_width=True):
+            if st.button("📊 Step 3: 결과 분석하기", use_container_width=True):
                 st.session_state.analysis_done = True
                 st.session_state.audio_bytes = audio['bytes']
         st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
