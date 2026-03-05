@@ -8,3 +8,7 @@ streamlit-mic-recorder
 openai
 fuzzywuzzy
 python-Levenshtein
+
+streamlit-mic-recorder
+SpeechRecognition
+
