@@ -100,6 +100,31 @@ if audio:
     
     st.caption("💡 Tip: 파형의 진폭(높이)이 일정하고 단어 사이의 끊어읽기가 명확한지 확인해보세요.")
 
+# 5. 음성학적 시각화 (버튼 클릭 시 노출)
+    st.divider()
+    st.subheader("3단계: 데이터 심층 분석")
+    
+    if st.button("📊 나의 발음 파형(Waveform) 분석하기"):
+        with st.spinner("파형 데이터를 생성 중입니다..."):
+            # 파형 그래프 생성 로직
+            y, sr_rate = librosa.load(io.BytesIO(wav_io.getvalue()))
+            
+            fig, ax = plt.subplots(figsize=(12, 3))
+            librosa.display.waveshow(y, sr=sr_rate, ax=ax, color='skyblue')
+            ax.set_title("Your Voice Waveform Analysis")
+            ax.set_xlabel("Time (s)")
+            ax.set_ylabel("Amplitude")
+            
+            # 그래프 출력
+            st.pyplot(fig)
+            
+            # 추가적인 음성학적 가이드
+            st.info("""
+            **💡 파형 읽는 법:**
+            - **진폭(높이):** 목소리의 크기와 강세를 나타냅니다. 중요한 단어에서 파형이 커졌는지 확인하세요.
+            - **간격:** 단어와 단어 사이의 휴지(Pause)를 나타냅니다. 너무 길거나 짧지 않은지 체크해보세요.
+            """)
+            
 # 5. 하단 안내 (선생님의 교육 철학 반영)
 st.sidebar.markdown("### 🏛️ 교육적 가이드")
 st.sidebar.write("""
