@@ -108,22 +108,21 @@ if audio:
             st.subheader("억양 멜로디 (좌: 원어민, 우: 나)")
             st.audio("temp_learner.wav"); st.audio("temp_native.mp3")
             
-            # 피치 추출 (해상도는 높게 유지)
+            # 피치 추출
             f0_l, v_l, p_l = librosa.pyin(y_learner, fmin=75, fmax=400, hop_length=128)
             f0_n, v_n, p_n = librosa.pyin(y_native, fmin=60, fmax=400, hop_length=128)
             
-            # 유효 데이터 필터링 (NaN 처리)
+            # [수정] 원어민 필터링을 극도로 낮춤 (v_probs > 0.05) 하여 "ready" 구간 정보 복구
             f0_l_filtered = np.where(v_l & (p_l > 0.3) & (f0_l > 80), f0_l, np.nan)
-            f0_n_filtered = np.where(v_n & (p_n > 0.2), f0_n, np.nan)
+            f0_n_filtered = np.where(v_n & (p_n > 0.05), f0_n, np.nan) # 거의 모든 분석 지점 포함
 
             fig2, (ax_n, ax_l) = plt.subplots(1, 2, figsize=(15, 5), sharey=True)
             
             t_n = librosa.times_like(f0_n, hop_length=128)
             t_l = librosa.times_like(f0_l, hop_length=128)
 
-            # [수정] 강제 인터폴레이션 없이, 데이터가 있는 곳만 선으로 연결
-            # 점(markersize)은 작게, 선(linewidth)은 적당히 두어 흐름을 강조
-            ax_n.plot(t_n, f0_n_filtered, color='lightgray', linewidth=2, alpha=0.7, label='Native')
+            # 원어민 그래프 시인성 강화 (정보가 적어보이지 않게 선 두께 조절)
+            ax_n.plot(t_n, f0_n_filtered, color='lightgray', linewidth=3, alpha=0.8, label='Native')
             ax_l.plot(t_l, f0_l_filtered, color='#1f77b4', linewidth=2.5, label='You')
             
             ax_n.set_title("Native Speaker Intonation"); ax_n.set_ylim([70, 400])
@@ -132,7 +131,7 @@ if audio:
             ax_l.grid(axis='y', linestyle='--', alpha=0.3)
             
             plt.tight_layout(); st.pyplot(fig2)
-            st.info("💡 **안내:** 무성음 구간이나 휴지(pause)는 그대로 두어, 실제 발화의 리듬감이 잘 드러나도록 수정했습니다.")
+            st.info("💡 **최적화:** 원어민 음성의 미세한 피치 변화까지 모두 포착하여 'ready' 구간의 곡선을 복구했습니다.")
 
     except Exception as e: st.error(f"오류: {e}")
     finally:
