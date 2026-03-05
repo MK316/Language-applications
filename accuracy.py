@@ -10,11 +10,8 @@ from pydub.silence import detect_nonsilent
 from difflib import SequenceMatcher
 
 # --- 유틸리티 함수 ---
-
 def get_net_speaking_time(audio_path):
-    """무음 구간을 제외한 실제 발화 시간 계산 (임계값 상향으로 노이즈 방어)"""
     audio = AudioSegment.from_file(audio_path)
-    # -35dB 이하를 무음으로 간주하여 숨소리나 잡음이 시작점으로 잡히지 않게 함
     nonsilent_chunks = detect_nonsilent(audio, min_silence_len=100, silence_thresh=-35)
     if not nonsilent_chunks: return 0
     return sum([end - start for start, end in nonsilent_chunks]) / 1000.0
@@ -22,7 +19,6 @@ def get_net_speaking_time(audio_path):
 # --- 스트림릿 설정 ---
 st.set_page_config(page_title="AI 발음 분석기", layout="wide")
 
-# 실용적이고 자연스러운 유성음 중심 문장 20선
 sample_sentences = {
     "Level 01: (인사/기초)": "I am on my way.",
     "Level 02: (일상/기초)": "Nice room you have.",
@@ -48,12 +44,9 @@ sample_sentences = {
 
 st.title("🎙️ AI-Native 실용 발음 & 유창성 클리닉")
 
-# --- Step 1: 문장 선택 ---
-st.subheader("1단계: 실용 표현 선택하기 (Level 01~20)")
 selected_level = st.selectbox("학습 단계를 선택하세요:", list(sample_sentences.keys()))
 target_text = sample_sentences[selected_level]
 
-# 문장 박스 (CSS 간격 최적화 및 시각적 강조)
 st.markdown(f"""
     <div style="border: 2px solid #1f77b4; border-radius: 12px; padding: 35px; 
                 background-color: #f8f9fb; text-align: center; margin-bottom: 70px;
@@ -64,12 +57,10 @@ st.markdown(f"""
     </div>
     """, unsafe_allow_html=True)
 
-# --- Step 2: 녹음 ---
 audio = mic_recorder(start_prompt="🎤 녹음 시작", stop_prompt="🛑 녹음 완료", key="recorder")
 
 if audio:
     try:
-        # 오디오 처리 및 무음 제거 (타이트하게 절단)
         learner_raw = AudioSegment.from_file(io.BytesIO(audio['bytes']))
         learner_raw = learner_raw.strip_silence(silence_thresh=-35, padding=50)
         learner_raw.export("temp_learner.wav", format="wav")
@@ -86,7 +77,6 @@ if audio:
         y_learner, sr_l = librosa.load("temp_learner.wav", sr=22050)
         y_native, _ = librosa.load("temp_native.wav", sr=sr_l)
 
-        # 탭 구성
         tab1, tab2, tab3, tab4 = st.tabs(["🎯 AI 점수", "⏱️ 유창성 분석", "🔊 음파 대조", "📈 피치 분석"])
 
         with tab1:
@@ -98,12 +88,10 @@ if audio:
                     transcript = r.recognize_google(audio_data, language='en-US')
                     clean_target = target_text.lower().replace('.', '').replace(',', '').replace('?', '')
                     score = SequenceMatcher(None, clean_target, transcript.lower()).ratio()
-                    
                     c1, c2 = st.columns([1, 2])
                     c1.metric("정확도 점수", f"{int(score * 100)}점")
                     c2.success(f"**AI 인식 결과:** {transcript}")
-                    st.info("💡 점수 확인 후, 옆의 **[⏱️ 유창성 분석]** 탭에서 내 속도를 체크해 보세요!")
-                except: st.error("인식 실패. 배경 소음을 줄이고 다시 읽어보세요.")
+                except: st.error("인식 실패")
 
         with tab2:
             st.subheader("발화 속도(Fluency) 분석")
@@ -112,10 +100,6 @@ if audio:
             c1.metric("내 발화 시간", f"{learner_net_time:.2f}초")
             c2.metric("원어민 시간", f"{native_net_time:.2f}초")
             c3.metric("속도 비율", f"{int(ratio)}%")
-            
-            if 90 <= ratio <= 125: st.success("✅ 자연스러운 속도입니다.")
-            elif ratio < 90: st.warning("🚀 발화 속도가 빠릅니다. 억양을 더 살려보세요.")
-            else: st.info("🐢 단어 사이의 연결(Linking)을 더 매끄럽게 해보세요.")
 
         with tab3:
             st.subheader("강세와 리듬 (Waveform)")
@@ -129,29 +113,23 @@ if audio:
             st.subheader("억양 멜로디 (Pitch Contour)")
             st.audio("temp_learner.wav"); st.audio("temp_native.mp3")
             
-            # [수정] 피치 추출 시 fmin 상향 및 유성음 판별 임계값 강화로 고스트 피치 제거
-            f0_l, voiced_l, _ = librosa.pyin(y_learner, fmin=90, fmax=400, voiced_threshold=0.6)
-            f0_n, voiced_n, _ = librosa.pyin(y_native, fmin=90, fmax=400, voiced_threshold=0.6)
+            # [수정] 오류가 났던 voiced_threshold 인자를 제거하고, 수동으로 확률 필터링 진행
+            f0_l, voiced_l, voiced_probs_l = librosa.pyin(y_learner, fmin=90, fmax=400)
+            f0_n, voiced_n, voiced_probs_n = librosa.pyin(y_native, fmin=90, fmax=400)
             
-            # 물리적으로 너무 낮은 주파수 노이즈 강제 제거
-            voiced_l = voiced_l & (f0_l > 95)
-            voiced_n = voiced_n & (f0_n > 95)
+            # 수동 필터링: 유성음일 확률이 0.6 이상이고 피치가 95Hz 이상인 데이터만 유효 처리
+            # 이를 통해 시작 부분의 고스트 피치를 제거합니다.
+            valid_l = voiced_l & (voiced_probs_l > 0.6) & (f0_l > 95)
+            valid_n = voiced_n & (voiced_probs_n > 0.6) & (f0_n > 95)
 
             fig2, ax = plt.subplots(figsize=(12, 5))
-            ax.plot(librosa.times_like(f0_n)[voiced_n], f0_n[voiced_n], 'o--', label='Native', color='lightgray', markersize=3, alpha=0.6)
-            ax.plot(librosa.times_like(f0_l)[voiced_l], f0_l[voiced_l], 'o--', label='You', color='#1f77b4', markersize=4)
+            ax.plot(librosa.times_like(f0_n)[valid_n], f0_n[valid_n], 'o--', label='Native', color='lightgray', markersize=3, alpha=0.6)
+            ax.plot(librosa.times_like(f0_l)[valid_l], f0_l[valid_l], 'o--', label='You', color='#1f77b4', markersize=4)
             ax.set_ylim([80, 400]); ax.set_ylabel("Frequency (Hz)"); ax.legend()
             st.pyplot(fig2)
-            st.caption("※ 실제 발화가 시작된 유성음 구간만 표시됩니다. 고스트 피치가 제거되어 더 정교한 비교가 가능합니다.")
+            st.caption("※ 실제 발화 구간만 정밀하게 추출되었습니다.")
 
     except Exception as e: st.error(f"오류: {e}")
     finally:
         for f in ["temp_native.mp3", "temp_native.wav", "temp_learner.wav"]:
             if os.path.exists(f): os.remove(f)
-
-st.sidebar.markdown("""
-### 🏛️ 학습 가이드
-1. **Level 01-09**: 생활 밀착형 기초
-2. **Level 10-14**: 캠퍼스 및 업무 활용
-3. **Level 15-20**: 심화 학술 표현
-""")
