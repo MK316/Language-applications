@@ -10,16 +10,19 @@ from pydub.silence import detect_nonsilent
 from difflib import SequenceMatcher
 
 # --- 유틸리티 함수 ---
+
 def get_net_speaking_time(audio_path):
+    """무음 구간을 제외한 실제 발화 시간 계산 (임계값 상향으로 노이즈 방어)"""
     audio = AudioSegment.from_file(audio_path)
-    nonsilent_chunks = detect_nonsilent(audio, min_silence_len=100, silence_thresh=-45)
+    # -35dB 이하를 무음으로 간주하여 숨소리나 잡음이 시작점으로 잡히지 않게 함
+    nonsilent_chunks = detect_nonsilent(audio, min_silence_len=100, silence_thresh=-35)
     if not nonsilent_chunks: return 0
     return sum([end - start for start, end in nonsilent_chunks]) / 1000.0
 
 # --- 스트림릿 설정 ---
 st.set_page_config(page_title="AI 발음 분석기", layout="wide")
 
-# [수정] 실용적이고 자연스러운 유성음 중심 문장 20선
+# 실용적이고 자연스러운 유성음 중심 문장 20선
 sample_sentences = {
     "Level 01: (인사/기초)": "I am on my way.",
     "Level 02: (일상/기초)": "Nice room you have.",
@@ -38,7 +41,7 @@ sample_sentences = {
     "Level 15: (대학/학술)": "Online learning remains a main avenue in our era.",
     "Level 16: (대학/학술)": "Modern laws remain relevant in our human memory.",
     "Level 17: (비즈니스/심화)": "Managing a small loan is always a main worry.",
-    "Level 18: (대학/심화)": "Meaningful rumors are looming on the rainy river.",
+    "Level 18: (대학/심화)": "Meaningful rumors are blooming on the rainy river.",
     "Level 19: (고급/실무)": "Maintaining a warm memory lowers our lonely alarm.",
     "Level 20: (대학/고급)": "Enormous animal roaming remains a normal human alarm."
 }
@@ -50,7 +53,7 @@ st.subheader("1단계: 실용 표현 선택하기 (Level 01~20)")
 selected_level = st.selectbox("학습 단계를 선택하세요:", list(sample_sentences.keys()))
 target_text = sample_sentences[selected_level]
 
-# 문장 박스 (CSS 간격 최적화)
+# 문장 박스 (CSS 간격 최적화 및 시각적 강조)
 st.markdown(f"""
     <div style="border: 2px solid #1f77b4; border-radius: 12px; padding: 35px; 
                 background-color: #f8f9fb; text-align: center; margin-bottom: 70px;
@@ -66,13 +69,15 @@ audio = mic_recorder(start_prompt="🎤 녹음 시작", stop_prompt="🛑 녹음
 
 if audio:
     try:
-        # 오디오 처리
+        # 오디오 처리 및 무음 제거 (타이트하게 절단)
         learner_raw = AudioSegment.from_file(io.BytesIO(audio['bytes']))
+        learner_raw = learner_raw.strip_silence(silence_thresh=-35, padding=50)
         learner_raw.export("temp_learner.wav", format="wav")
         
         tts = gTTS(text=target_text, lang='en')
         tts.save("temp_native.mp3")
         native_raw = AudioSegment.from_file("temp_native.mp3", format="mp3")
+        native_raw = native_raw.strip_silence(silence_thresh=-35, padding=50)
         native_raw.export("temp_native.wav", format="wav")
 
         learner_net_time = get_net_speaking_time("temp_learner.wav")
@@ -91,16 +96,14 @@ if audio:
                 audio_data = r.record(source)
                 try:
                     transcript = r.recognize_google(audio_data, language='en-US')
-                    # 구두점 제거 후 비교
                     clean_target = target_text.lower().replace('.', '').replace(',', '').replace('?', '')
-                    clean_transcript = transcript.lower()
-                    score = SequenceMatcher(None, clean_target, clean_transcript).ratio()
+                    score = SequenceMatcher(None, clean_target, transcript.lower()).ratio()
                     
                     c1, c2 = st.columns([1, 2])
                     c1.metric("정확도 점수", f"{int(score * 100)}점")
                     c2.success(f"**AI 인식 결과:** {transcript}")
-                    st.info("💡 **Tip:** 점수 확인 후, 옆의 **[⏱️ 유창성 분석]** 탭에서 내 속도를 체크해 보세요!")
-                except: st.error("인식 실패. 더 크고 명확하게 읽어보세요.")
+                    st.info("💡 점수 확인 후, 옆의 **[⏱️ 유창성 분석]** 탭에서 내 속도를 체크해 보세요!")
+                except: st.error("인식 실패. 배경 소음을 줄이고 다시 읽어보세요.")
 
         with tab2:
             st.subheader("발화 속도(Fluency) 분석")
@@ -110,10 +113,9 @@ if audio:
             c2.metric("원어민 시간", f"{native_net_time:.2f}초")
             c3.metric("속도 비율", f"{int(ratio)}%")
             
-            st.write("### 속도 가이드")
-            if 90 <= ratio <= 125: st.success("✅ **Great!** 자연스러운 속도입니다.")
-            elif ratio < 90: st.warning("🚀 **Fast!** 조금만 더 천천히, 리듬을 타보세요.")
-            else: st.info("🐢 **Slow!** 단어들을 더 매끄럽게 연결(Linking)해보세요.")
+            if 90 <= ratio <= 125: st.success("✅ 자연스러운 속도입니다.")
+            elif ratio < 90: st.warning("🚀 발화 속도가 빠릅니다. 억양을 더 살려보세요.")
+            else: st.info("🐢 단어 사이의 연결(Linking)을 더 매끄럽게 해보세요.")
 
         with tab3:
             st.subheader("강세와 리듬 (Waveform)")
@@ -126,22 +128,30 @@ if audio:
         with tab4:
             st.subheader("억양 멜로디 (Pitch Contour)")
             st.audio("temp_learner.wav"); st.audio("temp_native.mp3")
-            f0_l, voiced_l, _ = librosa.pyin(y_learner, fmin=70, fmax=400)
-            f0_n, voiced_n, _ = librosa.pyin(y_native, fmin=70, fmax=400)
+            
+            # [수정] 피치 추출 시 fmin 상향 및 유성음 판별 임계값 강화로 고스트 피치 제거
+            f0_l, voiced_l, _ = librosa.pyin(y_learner, fmin=90, fmax=400, voiced_threshold=0.6)
+            f0_n, voiced_n, _ = librosa.pyin(y_native, fmin=90, fmax=400, voiced_threshold=0.6)
+            
+            # 물리적으로 너무 낮은 주파수 노이즈 강제 제거
+            voiced_l = voiced_l & (f0_l > 95)
+            voiced_n = voiced_n & (f0_n > 95)
+
             fig2, ax = plt.subplots(figsize=(12, 5))
             ax.plot(librosa.times_like(f0_n)[voiced_n], f0_n[voiced_n], 'o--', label='Native', color='lightgray', markersize=3, alpha=0.6)
             ax.plot(librosa.times_like(f0_l)[voiced_l], f0_l[voiced_l], 'o--', label='You', color='#1f77b4', markersize=4)
-            ax.set_ylim([50, 400]); ax.legend(); st.pyplot(fig2)
+            ax.set_ylim([80, 400]); ax.set_ylabel("Frequency (Hz)"); ax.legend()
+            st.pyplot(fig2)
+            st.caption("※ 실제 발화가 시작된 유성음 구간만 표시됩니다. 고스트 피치가 제거되어 더 정교한 비교가 가능합니다.")
 
     except Exception as e: st.error(f"오류: {e}")
     finally:
         for f in ["temp_native.mp3", "temp_native.wav", "temp_learner.wav"]:
             if os.path.exists(f): os.remove(f)
 
-# 사이드바 가이드
 st.sidebar.markdown("""
 ### 🏛️ 학습 가이드
-1. **Level 01-09**: 생활 밀착형 기초 표현
-2. **Level 10-14**: 업무 및 캠퍼스 활용 표현
-3. **Level 15-20**: 심화 학술 및 전문적 표현
+1. **Level 01-09**: 생활 밀착형 기초
+2. **Level 10-14**: 캠퍼스 및 업무 활용
+3. **Level 15-20**: 심화 학술 표현
 """)
