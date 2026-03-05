@@ -2,60 +2,40 @@ import streamlit as st
 from streamlit_mic_recorder import mic_recorder
 import speech_recognition as sr
 import io
+from pydub import AudioSegment  # 추가: 포맷 변환용
 from difflib import SequenceMatcher
 
 st.title("AI 발음 평가 도우미")
 
-# 1. 목표 문장 설정 (수업 내용에 맞춰 변경 가능)
 target_text = "The quick brown fox jumps over the lazy dog."
-st.markdown(f"### 🎯 Target Sentence")
-st.info(target_text)
+st.info(f"🎯 Target: {target_text}")
 
-# 2. 녹음 버튼 (브라우저 마이크 사용)
-st.write("아래 버튼을 눌러 문장을 읽어주세요.")
-audio = mic_recorder(
-    start_prompt="🎤 녹음 시작",
-    stop_prompt="🛑 녹음 완료",
-    key="recorder"
-)
+audio = mic_recorder(start_prompt="🎤 녹음 시작", stop_prompt="🛑 녹음 완료", key="recorder")
 
 if audio:
-    # 3. 오디오 데이터 처리
-    audio_bio = io.BytesIO(audio['bytes'])
+    # 1. 수신된 오디오 바이트 읽기
+    audio_bytes = audio['bytes']
     
-    # 4. SpeechRecognition을 이용한 무료 STT (Google 엔진)
-    r = sr.Recognizer()
+    # 2. pydub을 사용하여 WebM/Ogg를 WAV로 변환
     try:
-        with sr.AudioFile(audio_bio) as source:
+        # 메모리 상의 바이트 데이터를 오디오 세그먼트로 로드
+        audio_segment = AudioSegment.from_file(io.BytesIO(audio_bytes))
+        
+        # WAV 형식으로 변환하여 메모리에 저장
+        wav_io = io.BytesIO()
+        audio_segment.export(wav_io, format="wav")
+        wav_io.seek(0) # 스트림 처음으로 이동
+
+        # 3. SpeechRecognition 작업 수행
+        r = sr.Recognizer()
+        with sr.AudioFile(wav_io) as source:
             audio_data = r.record(source)
-            # Google 무료 API 사용 (API 키 불필요)
             transcript = r.recognize_google(audio_data, language='en-US')
             
-            # 5. 유사도 점수 계산
+            # 결과 출력 및 유사도 계산
             score = SequenceMatcher(None, target_text.lower(), transcript.lower()).ratio()
-            accuracy_pct = int(score * 100)
+            st.subheader(f"평가 결과: {int(score * 100)}점")
+            st.write(f"**AI 인식 결과:** {transcript}")
 
-            # 6. 결과 시각화 (단어별 비교)
-            st.divider()
-            st.subheader(f"평가 결과: {accuracy_pct}점")
-            
-            # 단어별 하이라이트 로직
-            target_words = target_text.lower().replace('.', '').split()
-            recognized_words = transcript.lower().split()
-            
-            display_html = ""
-            for word in recognized_words:
-                if word in target_words:
-                    display_html += f"<span style='color:green;'>{word}</span> "
-                else:
-                    display_html += f"<span style='color:red; text-decoration:underline;'>{word}</span> "
-            
-            st.markdown("---")
-            st.write("**AI가 인식한 내용:**")
-            st.markdown(display_html, unsafe_allow_html=True)
-            st.caption("Tip: 초록색은 정확한 발음, 빨간색은 인식이 안 된 발음입니다.")
-
-    except sr.UnknownValueError:
-        st.error("죄송합니다. 목소리를 인식하지 못했습니다. 다시 시도해 주세요.")
-    except sr.RequestError:
-        st.error("인터넷 연결 문제로 서버에 접근할 수 없습니다.")
+    except Exception as e:
+        st.error(f"오디오 변환 중 오류가 발생했습니다: {e}")
