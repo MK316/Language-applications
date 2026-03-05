@@ -62,7 +62,7 @@ with main_container:
     center_col1, center_col2, center_col3 = st.columns([1, 2, 1])
     with center_col2:
         st.markdown(f"""
-            <div style="border: 2px solid #1f77b4; border-radius: 12px; padding: 15px; 
+            <div style="border: 2px solid #1f77b4; border-radius: 12px; padding: 10px; 
                         background-color: #f8f9fb; text-align: center; margin-bottom: 15px;">
                 <h3 style="color: #1f77b4; margin: 0; font-weight: 700; font-family: 'Segoe UI';">
                     "{target_text}"
