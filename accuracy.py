@@ -60,15 +60,19 @@ audio = mic_recorder(start_prompt="🎤 녹음 시작", stop_prompt="🛑 녹음
 
 if audio:
     try:
+        # [핵심 수정 1] 인식용 원본 오디오 보존
         audio_stream = io.BytesIO(audio['bytes'])
-        learner_raw = AudioSegment.from_file(audio_stream)
-        learner_proc = learner_raw.strip_silence(silence_thresh=-40, padding=150)
+        full_audio = AudioSegment.from_file(audio_stream)
+        full_audio.export("temp_stt.wav", format="wav") # 자르지 않은 원본 저장
+        
+        # [핵심 수정 2] 분석용 오디오 (무음 제거 완화: padding을 300ms로 늘림)
+        learner_proc = full_audio.strip_silence(silence_thresh=-45, padding=300)
         learner_proc.export("temp_learner.wav", format="wav")
         
         tts = gTTS(text=target_text, lang='en')
         tts.save("temp_native.mp3")
         native_raw = AudioSegment.from_file("temp_native.mp3", format="mp3")
-        native_raw = native_raw.strip_silence(silence_thresh=-40, padding=150)
+        native_raw = native_raw.strip_silence(silence_thresh=-45, padding=300)
         native_raw.export("temp_native.wav", format="wav")
 
         learner_net_time = get_net_speaking_time("temp_learner.wav")
@@ -79,17 +83,20 @@ if audio:
         tab1, tab2, tab3, tab4 = st.tabs(["🎯 AI 점수", "⏱️ 유창성 분석", "🔊 음파 대조", "📈 피치 분석"])
 
         with tab1:
+            st.subheader("인식 결과 및 정확도")
             r = sr.Recognizer()
-            with sr.AudioFile("temp_learner.wav") as source:
+            # [핵심 수정 3] 인식을 위해 자르지 않은 원본 파일(temp_stt.wav) 사용
+            with sr.AudioFile("temp_stt.wav") as source:
                 r.adjust_for_ambient_noise(source, duration=0.5)
                 audio_data = r.record(source)
                 try:
                     transcript = r.recognize_google(audio_data, language='en-US')
                     clean_target = target_text.lower().replace('.', '').replace(',', '').replace('?', '')
                     score = SequenceMatcher(None, clean_target, transcript.lower()).ratio()
-                    st.metric("정확도 점수", f"{int(score * 100)}점")
-                    st.success(f"**인식 결과:** {transcript}")
-                except: st.error("인식 실패: 다시 명확하게 읽어주세요.")
+                    c1, c2 = st.columns([1, 2])
+                    c1.metric("정확도 점수", f"{int(score * 100)}점")
+                    c2.success(f"**AI 인식 결과:** {transcript}")
+                except: st.error("인식 실패: 마이크를 가깝게 대고 다시 읽어보세요.")
 
         with tab2:
             ratio = (learner_net_time / native_net_time) * 100 if native_net_time > 0 else 0
@@ -108,32 +115,25 @@ if audio:
             st.subheader("억양 멜로디 (좌: 원어민, 우: 나)")
             st.audio("temp_learner.wav"); st.audio("temp_native.mp3")
             
-            # 피치 추출
             f0_l, v_l, p_l = librosa.pyin(y_learner, fmin=75, fmax=400, hop_length=128)
             f0_n, v_n, p_n = librosa.pyin(y_native, fmin=60, fmax=400, hop_length=128)
             
-            # [수정] 원어민 필터링을 극도로 낮춤 (v_probs > 0.05) 하여 "ready" 구간 정보 복구
-            f0_l_filtered = np.where(v_l & (p_l > 0.3) & (f0_l > 80), f0_l, np.nan)
-            f0_n_filtered = np.where(v_n & (p_n > 0.05), f0_n, np.nan) # 거의 모든 분석 지점 포함
+            # 피치 필터링 (NaN 처리로 자연스러운 끊김 유지)
+            f0_l_filtered = np.where(v_l & (p_l > 0.25) & (f0_l > 80), f0_l, np.nan)
+            f0_n_filtered = np.where(v_n & (p_n > 0.05), f0_n, np.nan)
 
             fig2, (ax_n, ax_l) = plt.subplots(1, 2, figsize=(15, 5), sharey=True)
-            
             t_n = librosa.times_like(f0_n, hop_length=128)
             t_l = librosa.times_like(f0_l, hop_length=128)
 
-            # 원어민 그래프 시인성 강화 (정보가 적어보이지 않게 선 두께 조절)
-            ax_n.plot(t_n, f0_n_filtered, color='lightgray', linewidth=3, alpha=0.8, label='Native')
-            ax_l.plot(t_l, f0_l_filtered, color='#1f77b4', linewidth=2.5, label='You')
+            ax_n.plot(t_n, f0_n_filtered, color='lightgray', linewidth=3, alpha=0.8)
+            ax_l.plot(t_l, f0_l_filtered, color='#1f77b4', linewidth=2.5)
             
             ax_n.set_title("Native Speaker Intonation"); ax_n.set_ylim([70, 400])
             ax_l.set_title("Your Intonation"); ax_l.set_ylim([70, 400])
-            ax_n.grid(axis='y', linestyle='--', alpha=0.3)
-            ax_l.grid(axis='y', linestyle='--', alpha=0.3)
-            
             plt.tight_layout(); st.pyplot(fig2)
-            st.info("💡 **최적화:** 원어민 음성의 미세한 피치 변화까지 모두 포착하여 'ready' 구간의 곡선을 복구했습니다.")
 
     except Exception as e: st.error(f"오류: {e}")
     finally:
-        for f in ["temp_native.mp3", "temp_native.wav", "temp_learner.wav"]:
+        for f in ["temp_native.mp3", "temp_native.wav", "temp_learner.wav", "temp_stt.wav"]:
             if os.path.exists(f): os.remove(f)
