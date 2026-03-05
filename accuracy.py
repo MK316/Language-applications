@@ -6,80 +6,105 @@ import librosa
 import librosa.display
 import matplotlib.pyplot as plt
 import numpy as np
-from pydub import AudioSegment
 from gtts import gTTS
+from difflib import SequenceMatcher
 
-# 1. TTS 생성 함수 (원어민 가이드 음성)
-def generate_tts_wav(text, duration_sec):
+# 페이지 설정
+st.set_page_config(page_title="AI 발음 비교 분석기", layout="wide")
+
+st.title("🎙️ AI-Native 발음 비교 분석기 (v2.0)")
+st.write("원어민의 파형과 자신의 발음을 동일한 시간 선상에서 비교해보세요.")
+
+# 1. 목표 문장 설정
+target_text = "The quick brown fox jumps over the lazy dog."
+st.info(f"🎯 **Target:** {target_text}")
+
+# 2. 녹음 섹션
+audio = mic_recorder(
+    start_prompt="🎤 녹음 시작",
+    stop_prompt="🛑 녹음 완료",
+    key="recorder"
+)
+
+def get_tts_waveform(text, target_duration, target_sr):
+    """gTTS로 생성된 음성을 목표 길이에 맞춰 numpy 배열로 반환"""
     tts = gTTS(text=text, lang='en')
     tts_fp = io.BytesIO()
     tts.save(tts_fp)
     tts_fp.seek(0)
     
-    # [수정] format="mp3"를 명시하고, pydub이 데이터 스트림을 잘 읽도록 설정
-    try:
-        tts_audio = AudioSegment.from_mp3(tts_fp)
-    except:
-        # mp3 직접 읽기 실패 시 일반 from_file 시도
-        tts_fp.seek(0)
-        tts_audio = AudioSegment.from_file(tts_fp, format="mp3")
+    # librosa로 직접 로드 (pydub 미사용)
+    y_tts, _ = librosa.load(tts_fp, sr=target_sr)
     
-    # 학습자 녹음 시간에 맞춰 중앙 정렬 (Padding)
-    # 기존 코드와 동일...
-    padding_duration = (duration_sec * 1000) - len(tts_audio)
-    if padding_duration > 0:
-        silence = AudioSegment.silent(duration=padding_duration / 2)
-        tts_audio = silence + tts_audio + silence
-    
-    tts_audio = tts_audio[:int(duration_sec * 1000)]
-    
-    wav_io = io.BytesIO()
-    tts_audio.export(wav_io, format="wav")
-    wav_io.seek(0)
-    return wav_io
-
-# --- UI 부분 ---
-st.title("🎙️ AI-Native 발음 비교 분석기")
-target_text = "The quick brown fox jumps over the lazy dog."
-st.info(f"🎯 **Target:** {target_text}")
-
-audio = mic_recorder(start_prompt="🎤 녹음 시작", stop_prompt="🛑 녹음 완료", key="recorder")
+    # 시간 맞추기 (Padding)
+    target_samples = int(target_duration * target_sr)
+    if len(y_tts) < target_samples:
+        padding = (target_samples - len(y_tts)) // 2
+        y_tts = np.pad(y_tts, (padding, target_samples - len(y_tts) - padding), 'constant')
+    else:
+        y_tts = y_tts[:target_samples]
+    return y_tts
 
 if audio:
-    # 학습자 오디오 처리
+    # 3. 데이터 로드 및 STT 분석
     audio_bytes = audio['bytes']
-    learner_segment = AudioSegment.from_file(io.BytesIO(audio_bytes))
-    duration_sec = len(learner_segment) / 1000.0 # 녹음 시간 계산
+    audio_fp = io.BytesIO(audio_bytes)
     
-    # 학습자 WAV 변환
-    learner_wav = io.BytesIO()
-    learner_segment.export(learner_wav, format="wav")
-    learner_wav.seek(0)
+    # 학습자 데이터 로드
+    y_learner, sr_rate = librosa.load(audio_fp, sr=22050)
+    duration_sec = len(y_learner) / sr_rate
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("📝 인식 결과")
+        r = sr.Recognizer()
+        # STT를 위해 wav 형식으로 임시 변환 (speech_recognition용)
+        try:
+            with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
+                audio_data = r.record(source)
+                transcript = r.recognize_google(audio_data, language='en-US')
+                
+                score = SequenceMatcher(None, target_text.lower(), transcript.lower()).ratio()
+                st.metric("발음 정확도", f"{int(score * 100)}%")
+                st.write(f"**AI 인식:** {transcript}")
+        except:
+            st.warning("텍스트 변환에 실패했습니다. 하지만 파형 비교는 가능합니다.")
 
-    # TTS 가이드 생성 (학습자 시간과 동일하게)
-    tts_wav = generate_tts_wav(target_text, duration_sec)
+    with col2:
+        st.subheader("📊 시각화 도구")
+        if st.button("원어민 파형과 내 발음 대조하기"):
+            with st.spinner("데이터 동기화 중..."):
+                try:
+                    # 원어민 TTS 파형 생성 (학습자 시간에 맞춤)
+                    y_native = get_tts_waveform(target_text, duration_sec, sr_rate)
+                    
+                    # 그래프 그리기
+                    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 5), sharex=True)
+                    
+                    # Native (상단)
+                    librosa.display.waveshow(y_native, sr=sr_rate, ax=ax1, color='lightgray')
+                    ax1.set_title("Native Speaker (Standard)")
+                    ax1.set_ylabel("Amp")
+                    
+                    # Learner (하단)
+                    librosa.display.waveshow(y_learner, sr=sr_rate, ax=ax2, color='skyblue')
+                    ax2.set_title("Your Pronunciation")
+                    ax2.set_ylabel("Amp")
+                    
+                    plt.tight_layout()
+                    st.pyplot(fig)
+                    
+                    st.caption(f"💡 총 {duration_sec:.2f}초의 구간을 동일하게 정렬했습니다. 파형의 굴곡(Peak)이 일치하는지 확인하세요.")
+                except Exception as e:
+                    st.error(f"시각화 에러: {e}")
 
-    # 시각화 버튼
-    if st.button("📊 원어민 파형과 내 발음 비교하기"):
-        # 데이터 로드
-        y_learner, sr_l = librosa.load(learner_wav)
-        y_tts, sr_t = librosa.load(tts_wav)
-
-        # 그래프 생성 (2행 1열)
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
-        
-        # 상단: 원어민 (TTS)
-        librosa.display.waveshow(y_tts, sr=sr_t, ax=ax1, color='lightgray')
-        ax1.set_title("Native Speaker (Guide)")
-        ax1.set_ylabel("Amplitude")
-        
-        # 하단: 학습자
-        librosa.display.waveshow(y_learner, sr=sr_l, ax=ax2, color='skyblue')
-        ax2.set_title("Your Pronunciation")
-        ax2.set_xlabel("Time (s)")
-        ax2.set_ylabel("Amplitude")
-
-        plt.tight_layout()
-        st.pyplot(fig)
-
-        st.success(f"총 {duration_sec:.2f}초 동안 녹음되었습니다. 원어민 파형의 '봉우리' 위치와 본인의 강세를 비교해 보세요!")
+# 사이드바 가이드
+st.sidebar.title("📚 학습 가이드")
+st.sidebar.write("""
+1. **정확도(%)**: 단어의 일치도를 나타냅니다.
+2. **파형(Waveform)**: 
+    - **가로축**: 시간의 흐름
+    - **세로축**: 소리의 강도(Stress)
+- 원어민 파형과 자신의 파형이 비슷한 위치에서 솟아오르는지 확인해보세요!
+""")
