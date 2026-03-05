@@ -84,23 +84,7 @@ if audio:
         except Exception as e:
             st.error(f"분석 중 오류 발생: {e}")
 
-    # 4. 음성학적 시각화 (Waveform)
-    st.divider()
-    st.subheader("3단계: 음성 파형(Waveform) 분석")
-    
-    # 파형 그래프 생성
-    y, sr_rate = librosa.load(io.BytesIO(wav_io.getvalue()))
-    
-    fig, ax = plt.subplots(figsize=(12, 3))
-    librosa.display.waveshow(y, sr=sr_rate, ax=ax, color='skyblue')
-    ax.set_title("Your Voice Waveform")
-    ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Amplitude")
-    st.pyplot(fig)
-    
-    st.caption("💡 Tip: 파형의 진폭(높이)이 일정하고 단어 사이의 끊어읽기가 명확한지 확인해보세요.")
-
-# 5. 음성학적 시각화 (버튼 클릭 시 노출)
+# 4. 음성학적 시각화 (버튼 클릭 시 노출)
     st.divider()
     st.subheader("3단계: 데이터 심층 분석")
     
