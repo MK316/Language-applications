@@ -10,10 +10,13 @@ from pydub.silence import detect_nonsilent
 from difflib import SequenceMatcher
 
 # --- 유틸리티 함수 ---
+
 def get_net_speaking_time(audio_path):
+    """실제 발화 시간 계산 (임계값 완화로 문장 보존)"""
     try:
         audio = AudioSegment.from_file(audio_path)
-        nonsilent_chunks = detect_nonsilent(audio, min_silence_len=100, silence_thresh=-35)
+        # -40dB로 하향 조정하여 문장 앞뒤가 잘리는 현상 방지
+        nonsilent_chunks = detect_nonsilent(audio, min_silence_len=100, silence_thresh=-40)
         if not nonsilent_chunks: return 0
         return sum([end - start for start, end in nonsilent_chunks]) / 1000.0
     except: return 0
@@ -51,8 +54,7 @@ target_text = sample_sentences[selected_level]
 
 st.markdown(f"""
     <div style="border: 2px solid #1f77b4; border-radius: 12px; padding: 35px; 
-                background-color: #f8f9fb; text-align: center; margin-bottom: 70px;
-                box-shadow: 2px 2px 10px rgba(0,0,0,0.05);">
+                background-color: #f8f9fb; text-align: center; margin-bottom: 70px;">
         <h2 style="color: #1f77b4; margin: 0; font-family: 'Segoe UI', sans-serif; font-weight: 600;">
             "{target_text}"
         </h2>
@@ -63,15 +65,18 @@ audio = mic_recorder(start_prompt="🎤 녹음 시작", stop_prompt="🛑 녹음
 
 if audio:
     try:
+        # 오디오 원본 보존 (인식률 향상을 위해)
         audio_stream = io.BytesIO(audio['bytes'])
         learner_raw = AudioSegment.from_file(audio_stream)
-        learner_raw = learner_raw.strip_silence(silence_thresh=-35, padding=50)
-        learner_raw.export("temp_learner.wav", format="wav")
+        
+        # [수정] 무음 제거를 너무 세게 하지 않도록 조정 (-35 -> -40)
+        learner_proc = learner_raw.strip_silence(silence_thresh=-40, padding=150)
+        learner_proc.export("temp_learner.wav", format="wav")
         
         tts = gTTS(text=target_text, lang='en')
         tts.save("temp_native.mp3")
         native_raw = AudioSegment.from_file("temp_native.mp3", format="mp3")
-        native_raw = native_raw.strip_silence(silence_thresh=-35, padding=50)
+        native_raw = native_raw.strip_silence(silence_thresh=-40, padding=150)
         native_raw.export("temp_native.wav", format="wav")
 
         learner_net_time = get_net_speaking_time("temp_learner.wav")
@@ -85,16 +90,19 @@ if audio:
             st.subheader("인식 결과 및 정확도")
             r = sr.Recognizer()
             with sr.AudioFile("temp_learner.wav") as source:
-                r.adjust_for_ambient_noise(source, duration=0.1)
+                # 배경 소음 적응 시간 확보
+                r.adjust_for_ambient_noise(source, duration=0.5)
                 audio_data = r.record(source)
                 try:
                     transcript = r.recognize_google(audio_data, language='en-US')
                     clean_target = target_text.lower().replace('.', '').replace(',', '').replace('?', '')
                     score = SequenceMatcher(None, clean_target, transcript.lower()).ratio()
+                    
                     c1, c2 = st.columns([1, 2])
                     c1.metric("정확도 점수", f"{int(score * 100)}점")
                     c2.success(f"**AI 인식 결과:** {transcript}")
-                except: st.error("인식 실패: 다시 명확하게 읽어주세요.")
+                except:
+                    st.error("인식 실패: 마이크 볼륨을 확인하고 다시 읽어보세요.")
 
         with tab2:
             st.subheader("발화 속도 분석")
@@ -115,12 +123,12 @@ if audio:
         with tab4:
             st.subheader("억양 멜로디 (좌: 원어민, 우: 나)")
             st.audio("temp_learner.wav"); st.audio("temp_native.mp3")
-            # 학습자 필터는 엄격하게(90Hz), 원어민 필터는 관대하게(60Hz)
+            # 원어민은 부드럽게(fmin=60), 학습자는 정밀하게(fmin=90)
             f0_l, v_l, p_l = librosa.pyin(y_learner, fmin=90, fmax=400)
             f0_n, v_n, p_n = librosa.pyin(y_native, fmin=60, fmax=400)
             
             valid_l = v_l & (p_l > 0.6) & (f0_l > 95)
-            valid_n = v_n & (p_n > 0.3) # 원어민은 데이터 보존 우선
+            valid_n = v_n & (p_n > 0.3) 
 
             fig2, (ax_n, ax_l) = plt.subplots(1, 2, figsize=(15, 5), sharey=True)
             ax_n.plot(librosa.times_like(f0_n)[valid_n], f0_n[valid_n], 'o--', color='lightgray', markersize=3)
