@@ -12,3 +12,4 @@ gTTS
 streamlit-mic-recorder
 SpeechRecognition
 audioread
+scipy
