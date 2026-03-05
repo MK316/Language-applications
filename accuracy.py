@@ -49,37 +49,49 @@ sample_sentences = {
 
 st.title("🎙️ AI-Native 실용 발음 & 유창성 클리닉")
 
-selected_level = st.selectbox("학습 단계를 선택하세요:", list(sample_sentences.keys()), 
-                              on_change=lambda: st.session_state.update({"analysis_done": False}))
-target_text = sample_sentences[selected_level]
+# 레이아웃 정렬을 위한 메인 컨테이너
+main_container = st.container()
 
-# 텍스트 박스 (절반 사이즈 및 margin-bottom: 30px 설정)
-col1, col2, col3 = st.columns([1, 2, 1])
-with col2:
-    st.markdown(f"""
-        <div style="border: 2px solid #1f77b4; border-radius: 10px; padding: 20px; 
-                    background-color: #f8f9fb; text-align: center; margin-bottom: 30px;">
-            <h3 style="color: #1f77b4; margin: 0; font-weight: 600;">"{target_text}"</h3>
-        </div>
-        """, unsafe_allow_html=True)
+with main_container:
+    # 1. 문장 선택 (상단 정렬)
+    selected_level = st.selectbox("학습 단계를 선택하세요:", list(sample_sentences.keys()), 
+                                  on_change=lambda: st.session_state.update({"analysis_done": False}))
+    target_text = sample_sentences[selected_level]
 
-# 녹음 인터페이스
-c_rec1, c_rec2, c_rec3 = st.columns([1, 1, 1])
-with c_rec2:
-    audio = mic_recorder(start_prompt="🎤 녹음 시작", stop_prompt="🛑 녹음 완료", key="recorder")
+    # 2. 텍스트 박스 & 녹음 버튼 (중앙 정렬 섹션)
+    center_col1, center_col2, center_col3 = st.columns([1, 2, 1])
+    with center_col2:
+        st.markdown(f"""
+            <div style="border: 2px solid #1f77b4; border-radius: 12px; padding: 25px; 
+                        background-color: #f8f9fb; text-align: center; margin-bottom: 15px;">
+                <h3 style="color: #1f77b4; margin: 0; font-weight: 700; font-family: 'Segoe UI';">
+                    "{target_text}"
+                </h3>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # 버튼을 박스 바로 아래 정중앙에 배치
+        rec_col1, rec_col2, rec_col3 = st.columns([1, 1, 1])
+        with rec_col2:
+            audio = mic_recorder(start_prompt="🎤 녹음 시작", stop_prompt="🛑 녹음 완료", key="recorder")
 
-if audio:
-    st.write("✅ 녹음이 완료되었습니다.")
-    if st.button("📊 결과 분석하기", use_container_width=True):
-        st.session_state.analysis_done = True
-        st.session_state.audio_bytes = audio['bytes']
+    # 3. 분석 버튼 (녹음 완료 시 표시)
+    if audio:
+        st.write("") # 미세 여백
+        anal_col1, anal_col2, anal_col3 = st.columns([1, 2, 1])
+        with anal_col2:
+            st.success("✅ 녹음 완료! 아래 버튼을 눌러 분석을 시작하세요.")
+            if st.button("📊 결과 분석하기", use_container_width=True):
+                st.session_state.analysis_done = True
+                st.session_state.audio_bytes = audio['bytes']
+        st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
 
+# 4. 분석 결과 섹션
 if st.session_state.get('analysis_done'):
     try:
         audio_stream = io.BytesIO(st.session_state.audio_bytes)
         full_audio = AudioSegment.from_file(audio_stream)
         full_audio.export("temp_stt.wav", format="wav")
-        
         learner_proc = full_audio.strip_silence(silence_thresh=-45, padding=300)
         learner_proc.export("temp_learner.wav", format="wav")
         
@@ -91,7 +103,6 @@ if st.session_state.get('analysis_done'):
 
         y_learner, sr_l = librosa.load("temp_learner.wav", sr=22050)
         y_native, _ = librosa.load("temp_native.wav", sr=sr_l)
-        
         learner_net_time = get_net_speaking_time("temp_learner.wav")
         native_net_time = get_net_speaking_time("temp_native.wav")
 
@@ -108,22 +119,25 @@ if st.session_state.get('analysis_done'):
                     score = SequenceMatcher(None, clean_target, transcript.lower()).ratio()
                     final_score = int(score * 100)
 
-                    # [수정] 점수와 인식 결과를 Info 박스 형태로 처리
-                    st.markdown(f"""
-                        <div style="display: flex; gap: 10px; margin-top: 20px;">
-                            <div style="flex: 1; background-color: #e8f4f8; border-left: 5px solid #1f77b4; padding: 15px; border-radius: 5px;">
-                                <small style="color: #1f77b4; font-weight: bold;">정확도 점수</small>
-                                <h2 style="margin: 0; color: #1f77b4;">{final_score}점</h2>
+                    # [UI 개선] 점수와 결과 박스 높이 및 정렬 통일
+                    res_col1, res_col2 = st.columns([1, 2])
+                    with res_col1:
+                        st.markdown(f"""
+                            <div style="background-color: #e8f4f8; border-left: 5px solid #1f77b4; padding: 20px; border-radius: 8px; height: 120px;">
+                                <div style="color: #1f77b4; font-weight: bold; margin-bottom: 10px;">정확도 점수</div>
+                                <h1 style="margin: 0; color: #1f77b4;">{final_score}점</h1>
                             </div>
-                            <div style="flex: 2; background-color: #eafaf1; border-left: 5px solid #2ecc71; padding: 15px; border-radius: 5px;">
-                                <small style="color: #27ae60; font-weight: bold;">AI 인식 결과</small>
-                                <p style="margin: 0; font-size: 1.2rem; color: #1e8449;">{transcript}</p>
+                            """, unsafe_allow_html=True)
+                    with res_col2:
+                        st.markdown(f"""
+                            <div style="background-color: #eafaf1; border-left: 5px solid #2ecc71; padding: 20px; border-radius: 8px; height: 120px;">
+                                <div style="color: #27ae60; font-weight: bold; margin-bottom: 10px;">AI 인식 결과</div>
+                                <div style="font-size: 1.4rem; color: #1e8449; font-weight: 500;">{transcript}</div>
                             </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                except: st.error("인식 실패: 마이크와 입 사이의 거리를 조절하여 다시 녹음해 주세요.")
+                            """, unsafe_allow_html=True)
+                except: st.error("인식 실패: 다시 명확하게 읽어주세요.")
 
-        # --- 나머지 Tab 로직은 기존 최적화 버전 유지 ---
+        # 나머지 탭은 정렬된 구조 유지
         with tab2:
             ratio = (learner_net_time / native_net_time) * 100 if native_net_time > 0 else 0
             c1, c2, c3 = st.columns(3)
