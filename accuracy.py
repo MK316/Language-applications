@@ -47,7 +47,7 @@ sample_sentences = {
     "Level 20: (대학/고급)": "Enormous animal roaming remains a normal human alarm."
 }
 
-st.title("🎙️ AI-Native 실용 발음 & 유창성 클리닉")
+st.markdown("### 🎙️ AI 활용 발음 연습")
 
 # 레이아웃 정렬을 위한 메인 컨테이너
 main_container = st.container()
