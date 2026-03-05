@@ -4,3 +4,7 @@ matplotlib
 numpy
 streamlit
 pydub
+streamlit-mic-recorder
+openai
+fuzzywuzzy
+python-Levenshtein
