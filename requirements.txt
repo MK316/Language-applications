@@ -11,4 +11,3 @@ python-Levenshtein
 gTTS
 streamlit-mic-recorder
 SpeechRecognition
-
