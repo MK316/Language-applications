@@ -16,16 +16,21 @@ def generate_tts_wav(text, duration_sec):
     tts.save(tts_fp)
     tts_fp.seek(0)
     
-    # gTTS(mp3)를 pydub으로 읽어서 길이를 맞춤
-    tts_audio = AudioSegment.from_file(tts_fp, format="mp3")
+    # [수정] format="mp3"를 명시하고, pydub이 데이터 스트림을 잘 읽도록 설정
+    try:
+        tts_audio = AudioSegment.from_mp3(tts_fp)
+    except:
+        # mp3 직접 읽기 실패 시 일반 from_file 시도
+        tts_fp.seek(0)
+        tts_audio = AudioSegment.from_file(tts_fp, format="mp3")
     
-    # 학습자 녹음 시간에 맞춰 무음 추가 (중앙 정렬)
+    # 학습자 녹음 시간에 맞춰 중앙 정렬 (Padding)
+    # 기존 코드와 동일...
     padding_duration = (duration_sec * 1000) - len(tts_audio)
     if padding_duration > 0:
         silence = AudioSegment.silent(duration=padding_duration / 2)
         tts_audio = silence + tts_audio + silence
     
-    # 최종 길이를 학습자 오디오와 정확히 맞춤
     tts_audio = tts_audio[:int(duration_sec * 1000)]
     
     wav_io = io.BytesIO()
