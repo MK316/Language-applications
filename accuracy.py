@@ -51,7 +51,7 @@ target_text = sample_sentences[selected_level]
 
 st.markdown(f"""
     <div style="border: 2px solid #1f77b4; border-radius: 12px; padding: 35px; 
-                background-color: #f8f9fb; text-align: center; margin-bottom: 70px;">
+                background-color: #f8f9fb; text-align: center; margin-bottom: 30px;">
         <h2 style="color: #1f77b4; margin: 0; font-family: 'Segoe UI', sans-serif;">"{target_text}"</h2>
     </div>
     """, unsafe_allow_html=True)
