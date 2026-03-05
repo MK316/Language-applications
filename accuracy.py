@@ -46,7 +46,7 @@ sample_sentences = {
 
 st.markdown("### 🎙️ AI 활용 발음 피드백")
 
-selected_level = st.selectbox("학습 단계를 선택하세요:", list(sample_sentences.keys()))
+selected_level = st.selectbox("Step 1: 학습 단계를 선택하세요:", list(sample_sentences.keys()))
 target_text = sample_sentences[selected_level]
 
 st.markdown(f"""
@@ -56,7 +56,7 @@ st.markdown(f"""
     </div>
     """, unsafe_allow_html=True)
 
-audio = mic_recorder(start_prompt="🎤 녹음 시작", stop_prompt="🛑 녹음 완료", key="recorder")
+audio = mic_recorder(start_prompt="🎤 Step 2. 녹음 시작", stop_prompt="🛑 녹음 완료", key="recorder")
 
 if audio:
     try:
