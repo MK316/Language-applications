@@ -21,7 +21,6 @@ def get_net_speaking_time(audio_path):
 # --- 스트림릿 설정 ---
 st.set_page_config(page_title="AI 발음 분석기", layout="wide")
 
-# [20단계] 실용적 표현 리스트
 sample_sentences = {
     "Level 01: (인사/기초)": "I am on my way.",
     "Level 02: (일상/기초)": "Nice room you have.",
@@ -90,7 +89,7 @@ if audio:
                     score = SequenceMatcher(None, clean_target, transcript.lower()).ratio()
                     st.metric("정확도 점수", f"{int(score * 100)}점")
                     st.success(f"**인식 결과:** {transcript}")
-                except: st.error("인식 실패: 마이크와 입 사이의 거리를 조절해 보세요.")
+                except: st.error("인식 실패: 다시 명확하게 읽어주세요.")
 
         with tab2:
             ratio = (learner_net_time / native_net_time) * 100 if native_net_time > 0 else 0
@@ -109,27 +108,31 @@ if audio:
             st.subheader("억양 멜로디 (좌: 원어민, 우: 나)")
             st.audio("temp_learner.wav"); st.audio("temp_native.mp3")
             
-            # [핵심 수정] hop_length를 512에서 128로 줄여 해상도 4배 향상 (직선형 방지)
-            # win_length를 조절하여 부드러운 추출 유도
-            f0_l, v_l, p_l = librosa.pyin(y_learner, fmin=80, fmax=400, hop_length=128)
+            # 피치 추출 (해상도는 높게 유지)
+            f0_l, v_l, p_l = librosa.pyin(y_learner, fmin=75, fmax=400, hop_length=128)
             f0_n, v_n, p_n = librosa.pyin(y_native, fmin=60, fmax=400, hop_length=128)
             
-            # 필터링 임계값 완화 (0.6 -> 0.4) 및 저역대 필터 조정 (95 -> 85)
-            valid_l = v_l & (p_l > 0.4) & (f0_l > 85)
-            valid_n = v_n & (p_n > 0.2) 
+            # 유효 데이터 필터링 (NaN 처리)
+            f0_l_filtered = np.where(v_l & (p_l > 0.3) & (f0_l > 80), f0_l, np.nan)
+            f0_n_filtered = np.where(v_n & (p_n > 0.2), f0_n, np.nan)
 
             fig2, (ax_n, ax_l) = plt.subplots(1, 2, figsize=(15, 5), sharey=True)
-            ax_n.plot(librosa.times_like(f0_n, hop_length=128)[valid_n], f0_n[valid_n], 'o', 
-                      color='lightgray', markersize=2, alpha=0.5)
-            # 점들을 선으로 잇지 않고 '점'으로만 표현하여 실제 데이터를 정직하게 보여줌
             
-            ax_l.plot(librosa.times_like(f0_l, hop_length=128)[valid_l], f0_l[valid_l], 'o', 
-                      color='#1f77b4', markersize=3)
+            t_n = librosa.times_like(f0_n, hop_length=128)
+            t_l = librosa.times_like(f0_l, hop_length=128)
+
+            # [수정] 강제 인터폴레이션 없이, 데이터가 있는 곳만 선으로 연결
+            # 점(markersize)은 작게, 선(linewidth)은 적당히 두어 흐름을 강조
+            ax_n.plot(t_n, f0_n_filtered, color='lightgray', linewidth=2, alpha=0.7, label='Native')
+            ax_l.plot(t_l, f0_l_filtered, color='#1f77b4', linewidth=2.5, label='You')
             
-            ax_n.set_title("Native Speaker Intonation"); ax_n.set_ylim([80, 400])
-            ax_l.set_title("Your Intonation"); ax_l.set_ylim([80, 400])
+            ax_n.set_title("Native Speaker Intonation"); ax_n.set_ylim([70, 400])
+            ax_l.set_title("Your Intonation"); ax_l.set_ylim([70, 400])
+            ax_n.grid(axis='y', linestyle='--', alpha=0.3)
+            ax_l.grid(axis='y', linestyle='--', alpha=0.3)
+            
             plt.tight_layout(); st.pyplot(fig2)
-            st.caption("※ 분석 해상도를 높여 억양의 미세한 굴곡을 더 정확하게 표현합니다.")
+            st.info("💡 **안내:** 무성음 구간이나 휴지(pause)는 그대로 두어, 실제 발화의 리듬감이 잘 드러나도록 수정했습니다.")
 
     except Exception as e: st.error(f"오류: {e}")
     finally:
