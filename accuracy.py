@@ -44,7 +44,7 @@ sample_sentences = {
     "Level 20: (대학/고급)": "Enormous animal roaming remains a normal human alarm."
 }
 
-st.title("🎙️ AI-Native 실용 발음 & 유창성 클리닉")
+st.markdown("### 🎙️ AI 활용 발음 피드백")
 
 selected_level = st.selectbox("학습 단계를 선택하세요:", list(sample_sentences.keys()))
 target_text = sample_sentences[selected_level]
