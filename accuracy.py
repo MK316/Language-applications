@@ -1,6 +1,6 @@
 import streamlit as st
 from streamlit_mic_recorder import mic_recorder
-import speech_recognition as sr
+import speech_recognition as speech_rec  # 별칭을 더 명확하게 변경
 import io, os, librosa, librosa.display
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
@@ -20,14 +20,12 @@ def get_speech_bounds(audio_segment, silence_thresh=-40, min_silence_len=100, bu
     return start_trim, end_trim
 
 def normalize_pitch(f0):
-    """Z-score 정규화: 개인별 음역대 차이를 제거하여 패턴만 비교"""
     mu = np.nanmean(f0)
     sigma = np.nanstd(f0)
     if sigma == 0 or np.isnan(sigma): return np.zeros_like(f0)
     return (f0 - mu) / sigma
 
 def calculate_intonation_score(f0_n, f0_l):
-    """정규화된 곡선 간의 상관계수 계산"""
     min_len = min(len(f0_n), len(f0_l))
     if min_len < 5: return 0
     vec_n = np.nan_to_num(f0_n[:min_len])
@@ -36,7 +34,7 @@ def calculate_intonation_score(f0_n, f0_l):
         corr, _ = pearsonr(vec_n, vec_l)
     return int(max(0, corr) * 100) if not np.isnan(corr) else 0
 
-# --- 2. 세션 상태 및 설정 ---
+# --- 2. 설정 및 세션 초기화 ---
 st.set_page_config(page_title="AI 발음 분석기", layout="wide")
 if 'analysis_done' not in st.session_state: st.session_state.analysis_done = False
 
@@ -59,7 +57,7 @@ with col_box:
     with rec_btn:
         audio = mic_recorder(start_prompt="🎤 녹음 시작", stop_prompt="🛑 녹음 완료", key="recorder")
 
-# --- 3. 녹음 후 즉시 실행 (구간 설정) ---
+# --- 3. 녹음 후 구간 설정 (슬라이더 전용) ---
 if audio:
     st.divider()
     audio_bytes = audio['bytes']
@@ -69,30 +67,23 @@ if audio:
     duration_sec = len(full_audio) / 1000.0
     y_full, sr_f = librosa.load("temp_preview.wav", sr=22050)
     
-    st.subheader("✂️ 발화 구간 설정 (슬라이더 조절)")
-    
-    # 자동 감지 초기값 계산
+    st.subheader("✂️ 발화 구간 설정")
     v_s, v_e = get_speech_bounds(full_audio)
     
-    # [수정] 통합 슬라이더: 시작과 끝을 동시에 조절
-    trim_range = st.slider("분석할 실제 목소리 구간을 선택하세요 (초):", 
+    # 슬라이더 전용: 시작과 끝을 동시에 조절
+    trim_range = st.slider("분석할 목소리 구간을 선택하세요 (초):", 
                            0.0, duration_sec, (float(v_s/1000), float(v_e/1000)), step=0.01)
 
-    # 파형 실시간 가이드
     fig_prev, ax = plt.subplots(figsize=(12, 3.5))
     librosa.display.waveshow(y_full, sr=sr_f, ax=ax, color='skyblue', alpha=0.6)
-    ax.axvline(x=trim_range[0], color='red', lw=2, label='Start')
-    ax.axvline(x=trim_range[1], color='red', lw=2, label='End')
+    ax.axvline(x=trim_range[0], color='red', lw=2)
+    ax.axvline(x=trim_range[1], color='red', lw=2)
     
-    # 줌 기능: 선택한 구간 근처를 더 잘 볼 수 있도록 자동 줌 설정
+    # 선택 구간 근처 줌인
     zoom_margin = 0.2
     ax.set_xlim(max(0, trim_range[0] - zoom_margin), min(duration_sec, trim_range[1] + zoom_margin))
-    
-    # 눈금 정밀도 자동 조정
     ax.xaxis.set_major_locator(ticker.AutoLocator())
-    ax.xaxis.set_minor_locator(ticker.AutoMinorLocator())
-    ax.grid(axis='x', which='both', linestyle='--', alpha=0.3)
-    
+    ax.grid(axis='x', linestyle='--', alpha=0.3)
     st.pyplot(fig_prev)
     st.audio(audio_bytes)
         
@@ -102,16 +93,14 @@ if audio:
         st.session_state.final_start = trim_range[0]
         st.session_state.final_end = trim_range[1]
 
-# --- 4. 상세 분석 결과 ---
+# --- 4. 상세 분석 탭 ---
 if st.session_state.analysis_done:
     try:
-        # 오디오 슬라이싱
         audio_stream = io.BytesIO(st.session_state.final_audio_bytes)
         full_audio = AudioSegment.from_file(audio_stream)
         s_ms, e_ms = st.session_state.final_start * 1000, st.session_state.final_end * 1000
         cropped = full_audio[s_ms:e_ms]
         
-        # 학습자/원어민 파일 저장
         l_s, l_e = get_speech_bounds(cropped, buffer_ms=50)
         final_l = cropped[l_s:l_e]
         final_l.export("temp_l.wav", format="wav")
@@ -122,10 +111,9 @@ if st.session_state.analysis_done:
         n_s, n_e = get_speech_bounds(native_raw, silence_thresh=-35)
         final_n = native_raw[n_s:n_e]; final_n.export("temp_n.wav", format="wav")
 
-        y_l, sr = librosa.load("temp_l.wav", sr=22050); y_n, _ = librosa.load("temp_n.wav", sr=sr)
+        y_l, sr_curr = librosa.load("temp_l.wav", sr=22050); y_n, _ = librosa.load("temp_n.wav", sr=sr_curr)
         l_dur, n_dur = len(final_l)/1000.0, len(final_n)/1000.0
 
-        # 공통 오디오 플레이어
         st.divider()
         ac1, ac2 = st.columns(2)
         with ac1: st.write("🎙️ **나의 발음**"); st.audio("temp_l.wav")
@@ -134,43 +122,36 @@ if st.session_state.analysis_done:
         tab1, tab2, tab3, tab4 = st.tabs(["🎯 AI 점수", "⏱️ 유창성 분석", "🔊 음파 대조", "📈 피치 분석"])
 
         with tab1:
-            recognizer = sr.Recognizer()
-            with sr.AudioFile("temp_stt.wav") as source:
-                data = recognizer.record(source)
+            # 변수명 충돌 방지를 위해 speech_rec 사용
+            recognizer_obj = speech_rec.Recognizer()
+            with speech_rec.AudioFile("temp_stt.wav") as source:
+                audio_data = recognizer_obj.record(source)
                 try:
-                    text = recognizer.recognize_google(data, language='en-US')
-                    sim = SequenceMatcher(None, target_text.lower(), text.lower()).ratio()
-                    st.metric("정확도 점수", f"{int(sim*100)}점")
-                    st.success(f"인식 결과: {text}")
+                    text_res = recognizer_obj.recognize_google(audio_data, language='en-US')
+                    sim_val = SequenceMatcher(None, target_text.lower(), text_res.lower()).ratio()
+                    st.metric("발음 정확도", f"{int(sim_val*100)}점")
+                    st.success(f"인식 결과: {text_res}")
                 except: st.error("인식 실패")
 
         with tab2:
             fig_dur, (ax_l, ax_n) = plt.subplots(2, 1, figsize=(12, 5))
-            librosa.display.waveshow(y_l, sr=sr, ax=ax_l, color='skyblue', alpha=0.7)
-            librosa.display.waveshow(y_n, sr=sr, ax=ax_n, color='lightgray', alpha=0.5)
-            ax_l.set_title(f"Learner ({l_dur:.2f}s)"); ax_n.set_title(f"Native ({n_dur:.2f}s)")
+            librosa.display.waveshow(y_l, sr=sr_curr, ax=ax_l, color='skyblue')
+            librosa.display.waveshow(y_n, sr=sr_curr, ax=ax_n, color='lightgray')
             plt.tight_layout(); st.pyplot(fig_dur)
             diff = ((l_dur / n_dur) - 1) * 100
             st.info(f"💡 발화 속도 편차: **{'+' if diff>=0 else ''}{int(diff)}%**")
-
-        with tab3:
-            fig_w, axw = plt.subplots(figsize=(12, 3))
-            librosa.display.waveshow(y_l, sr=sr, ax=axw, color='skyblue', alpha=0.7, label='Learner')
-            librosa.display.waveshow(y_n, sr=sr, ax=axw, color='lightgray', alpha=0.5, label='Native')
-            axw.legend(); st.pyplot(fig_w)
 
         with tab4:
             st.subheader("억양 멜로디 분석 (Pitch Contour)")
             f0_l, v_l, p_l = librosa.pyin(y_l, fmin=75, fmax=400, hop_length=64)
             f0_n, v_n, p_n = librosa.pyin(y_n, fmin=60, fmax=400, hop_length=64)
-            f0_l_f = np.where(v_l & (p_l > 0.15) & (f0_l > 80), f0_l, np.nan)
+            f0_l_f = np.where(v_l & (p_l > 0.1), f0_l, np.nan)
             f0_n_f = np.where(v_n & (p_n > 0.01), f0_n, np.nan)
             
-            t_l = librosa.times_like(f0_l, sr=sr, hop_length=64); t_n = librosa.times_like(f0_n, sr=sr, hop_length=64)
+            t_l = librosa.times_like(f0_l, sr=sr_curr, hop_length=64); t_n = librosa.times_like(f0_n, sr=sr_curr, hop_length=64)
             fig_p, (ax_l1, ax_n1) = plt.subplots(1, 2, figsize=(15, 4), sharey=True)
             ax_l1.plot(t_l, f0_l_f, color='#1f77b4', ls=':', marker='o', markersize=2)
-            ax_n1.plot(t_n, f0_n_f, color='lightgray', ls=':', marker='o', markersize=2)
-            ax_l1.set_title("Your Pitch"); ax_n1.set_title("Native Pitch")
+            ax_n1.plot(t_n, f0_n_f, color='gray', ls=':', marker='o', markersize=2)
             st.pyplot(fig_p)
 
             st.write("---")
@@ -183,10 +164,10 @@ if st.session_state.analysis_done:
                 axo.plot(t_l[:len(fl_norm)], fl_norm, color='#1f77b4', lw=2, label='Learner')
                 axo.set_title("Melody Pattern Overlay"); axo.legend(); st.pyplot(fig_ov)
                 
-                st.markdown(f"#### 🎯 억양 유사도: **{score}점**")
-                if score >= 80: st.success("🌟 억양이 매우 정확합니다!")
-                elif score >= 50: st.info("👍 흐름은 좋지만 강조점 처리를 확인해보세요.")
-                else: st.warning("🧐 억양의 높낮이 변화를 더 크게 주는 연습이 필요합니다.")
+                st.markdown(f"#### 🎯 억양 유사도 점수: **{score}점**")
+                if score >= 80: st.success("🌟 억양이 매우 자연스럽습니다!")
+                elif score >= 50: st.info("👍 리듬감이 좋습니다. 곡선이 어긋나는 부분의 고저를 확인해 보세요.")
+                else: st.warning("🧐 억양의 높낮이 변화(Pitch Range)를 더 크게 주어야 합니다.")
 
     except Exception as e: st.error(f"분석 중 오류 발생: {e}")
     finally:
