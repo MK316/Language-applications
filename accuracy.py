@@ -9,13 +9,26 @@ from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 from difflib import SequenceMatcher
 
-# --- 유틸리티 함수 ---
-def get_net_speaking_time(audio_path):
+# --- [개선] 순수 발화 시작과 끝 감지 함수 ---
+def get_speech_bounds(audio_segment, silence_thresh=-45, min_silence_len=100):
+    """실제 목소리가 시작되고 끝나는 지점(ms)을 반환"""
+    nonsilent_intervals = detect_nonsilent(audio_segment, 
+                                           min_silence_len=min_silence_len, 
+                                           silence_thresh=silence_thresh)
+    if not nonsilent_intervals:
+        return 0, len(audio_segment)
+    
+    # 첫 번째 비침묵 구간의 시작과 마지막 비침묵 구간의 끝
+    start_trim = nonsilent_intervals[0][0]
+    end_trim = nonsilent_intervals[-1][1]
+    return start_trim, end_trim
+
+# --- [개선] 순수 발화 시간만 계산하는 함수 ---
+def get_pure_speech_duration(audio_path):
     try:
         audio = AudioSegment.from_file(audio_path)
-        nonsilent_chunks = detect_nonsilent(audio, min_silence_len=100, silence_thresh=-45)
-        if not nonsilent_chunks: return 0
-        return sum([end - start for start, end in nonsilent_chunks]) / 1000.0
+        start, end = get_speech_bounds(audio)
+        return (end - start) / 1000.0  # 초 단위 변환
     except: return 0
 
 # --- 스트림릿 설정 ---
@@ -74,15 +87,12 @@ if audio:
     st.divider()
     st.subheader("✂️ 발화 구간 조정 (Trim Recording)")
     
-    # [해결 핵심] librosa.load 대신 pydub을 거쳐 임시 WAV 파일을 생성하고 이를 로드합니다.
     audio_bytes = audio['bytes']
     audio_stream = io.BytesIO(audio_bytes)
     full_audio = AudioSegment.from_file(audio_stream)
-    full_audio.export("temp_preview.wav", format="wav") # 임시 WAV 파일 생성
+    full_audio.export("temp_preview.wav", format="wav")
     
     duration_sec = len(full_audio) / 1000.0
-    
-    # 이제 librosa는 안전하게 WAV 파일을 읽을 수 있습니다.
     y_full, sr_f = librosa.load("temp_preview.wav", sr=22050)
     
     fig_preview, ax = plt.subplots(figsize=(12, 2.5))
@@ -97,10 +107,12 @@ if audio:
         st.audio(audio_bytes)
     
     with c_slide:
-        time_range = st.slider("분석할 목소리 구간만 선택 (비프음 제외):", 
-                               0.0, duration_sec, (0.0, duration_sec), step=0.1)
+        # VAD를 통해 추천 시작/끝 지점 자동 계산
+        v_start, v_end = get_speech_bounds(full_audio)
+        time_range = st.slider("분석 구간 선택 (비프음 제외):", 
+                               0.0, duration_sec, (float(v_start/1000), float(v_end/1000)), step=0.1)
         
-    if st.button("📊 Step 3: 지정된 구간으로 결과 분석하기", use_container_width=True):
+    if st.button("📊 Step 3: 결과 분석하기", use_container_width=True):
         st.session_state.analysis_done = True
         st.session_state.audio_bytes = audio_bytes
         st.session_state.start_time = time_range[0]
@@ -121,13 +133,18 @@ if st.session_state.analysis_done:
         tts = gTTS(text=target_text, lang='en')
         tts.save("temp_native.mp3")
         native_raw = AudioSegment.from_file("temp_native.mp3", format="mp3")
-        native_raw = native_raw.strip_silence(silence_thresh=-45, padding=300)
-        native_raw.export("temp_native.wav", format="wav")
+        # 원어민 음성도 앞뒤 공백을 타이트하게 제거
+        n_start, n_end = get_speech_bounds(native_raw)
+        native_proc = native_raw[n_start:n_end]
+        native_proc.export("temp_native.wav", format="wav")
 
         y_learner, sr_l = librosa.load("temp_learner.wav", sr=22050)
         y_native, _ = librosa.load("temp_native.wav", sr=sr_l)
-        learner_net_time = get_net_speaking_time("temp_learner.wav")
-        native_net_time = get_net_speaking_time("temp_native.wav")
+
+        # [수정] 2nd 탭 비교를 위한 정밀한 발화 시간 계산
+        # 이미 크롭된 파일이므로, 크롭된 안에서도 실제 소리가 있는 구간만 다시 계산
+        learner_speech_dur = get_pure_speech_duration("temp_learner.wav")
+        native_speech_dur = get_pure_speech_duration("temp_native.wav")
 
         st.divider()
         tab1, tab2, tab3, tab4 = st.tabs(["🎯 AI 점수", "⏱️ 유창성 분석", "🔊 음파 대조", "📈 피치 분석"])
@@ -149,17 +166,19 @@ if st.session_state.analysis_done:
                     with res_col2:
                         st.markdown(f"""<div style="background-color: #eafaf1; border-left: 5px solid #2ecc71; padding: 20px; border-radius: 8px; height: 120px;">
                                 <div style="color: #27ae60; font-weight: bold;">AI 인식 결과</div><div style="font-size: 1.4rem; color: #1e8449; font-weight: 500;">{transcript}</div></div>""", unsafe_allow_html=True)
-                except: st.error("인식 실패: 다시 명확하게 읽어주세요.")
+                except: st.error("인식 실패")
 
         with tab2:
-            ratio = (learner_net_time / native_net_time) * 100 if native_net_time > 0 else 0
+            st.subheader("순수 발화 시간(Speech Only) 비교")
+            ratio = (learner_speech_dur / native_speech_dur) * 100 if native_speech_dur > 0 else 0
             c1, c2, c3 = st.columns(3)
-            c1.metric("내 발화 시간", f"{learner_net_time:.2f}초")
-            c2.metric("원어민 시간", f"{native_net_time:.2f}초")
+            c1.metric("내 발화 시간", f"{learner_speech_dur:.2f}초")
+            c2.metric("원어민 시간", f"{native_speech_dur:.2f}초")
             c3.metric("속도 비율", f"{int(ratio)}%")
+            st.caption("※ 앞뒤 묵음과 잡음을 제외한 순수 말하기 시간만 비교한 결과입니다.")
 
         with tab3:
-            st.info(f"선택 구간: {st.session_state.start_time}s ~ {st.session_state.end_time}s")
+            st.info(f"분석 구간: {st.session_state.start_time}s ~ {st.session_state.end_time}s")
             fig_wave, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 4))
             librosa.display.waveshow(y_native, sr=sr_l, ax=ax1, color='lightgray')
             librosa.display.waveshow(y_learner, sr=sr_l, ax=ax2, color='skyblue')
@@ -177,6 +196,5 @@ if st.session_state.analysis_done:
 
     except Exception as e: st.error(f"오류: {e}")
     finally:
-        # 임시 파일들 삭제
         for f in ["temp_native.mp3", "temp_native.wav", "temp_learner.wav", "temp_stt.wav", "temp_preview.wav"]:
             if os.path.exists(f): os.remove(f)
