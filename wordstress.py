@@ -7,6 +7,7 @@ import numpy as np
 from gtts import gTTS
 from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
+from scipy.interpolate import interp1d
 
 # --- 1. 분석 엔진 함수 ---
 def get_speech_bounds(audio_segment, silence_thresh=-45, min_silence_len=50):
@@ -16,29 +17,26 @@ def get_speech_bounds(audio_segment, silence_thresh=-45, min_silence_len=50):
     return intervals[0][0], intervals[-1][1]
 
 def normalize_audio(y):
-    """진폭 정규화 (비교를 위해 최대 크기를 1로 맞춤)"""
+    """진폭 정규화"""
+    if len(y) == 0: return y
     return librosa.util.normalize(y)
 
 def calculate_stress_score(y_n, y_l, sr):
-    """
-    진폭 패턴(Envelope)의 상관관계를 통해 강세 일치도 계산
-    강세는 에너지(RMS)의 변화이므로 전체적인 에너지 흐름을 비교합니다.
-    """
-    # 0.1초 단위의 에너지(RMS) 추출
+    """진폭 패턴(Envelope)의 상관관계를 통해 강세 일치도 계산"""
     hop_length = 512
     rms_n = librosa.feature.rms(y=y_n, hop_length=hop_length)[0]
     rms_l = librosa.feature.rms(y=y_l, hop_length=hop_length)[0]
     
-    # 두 배열의 길이를 동일하게 맞춤 (리샘플링)
-    from scipy.interpolate import interp1d
-    f_n = interp1d(np.linspace(0, 1, len(rms_n)), rms_n)
-    f_l = interp1d(np.linspace(0, 1, len(rms_l)), rms_l)
+    if len(rms_n) < 2 or len(rms_l) < 2: return 0
+    
+    # 두 배열의 길이를 동일하게 맞춤 (100 포인트)
+    f_n = interp1d(np.linspace(0, 1, len(rms_n)), rms_n, fill_value="extrapolate")
+    f_l = interp1d(np.linspace(0, 1, len(rms_l)), rms_l, fill_value="extrapolate")
     
     new_x = np.linspace(0, 1, 100)
     norm_rms_n = f_n(new_x)
     norm_rms_l = f_l(new_x)
     
-    # 상관계수 계산
     correlation = np.corrcoef(norm_rms_n, norm_rms_l)[0, 1]
     return int(max(0, correlation) * 100) if not np.isnan(correlation) else 0
 
@@ -47,7 +45,6 @@ st.set_page_config(page_title="Word Stress Master", layout="wide")
 st.title("🎙️ Word Stress & Amplitude Master")
 st.markdown("예비 영어교사를 위한 **단어 강세 및 시각적 파형 분석** 학습 도구입니다.")
 
-# 학습용 단어 DB (강세 위치 정보 포함)
 word_db = {
     "Photograph (1음절 강세)": "photograph",
     "Photographer (2음절 강세)": "photographer",
@@ -56,9 +53,10 @@ word_db = {
     "Education (3음절 강세)": "education",
 }
 
-# --- 3. Step 1: 단어 선택 및 원어민 청취 ---
+# --- 3. Step 1: 단어 선택 ---
 with st.sidebar:
     st.header("📍 Step 1: 단어 선택")
+    # 변수명을 selected_label로 통일
     selected_label = st.selectbox("학습할 단어를 선택하세요:", list(word_db.keys()))
     target_word = word_db[selected_label]
     
@@ -75,90 +73,95 @@ with col_rec:
     st.write("아래 버튼을 눌러 단어를 발음하세요.")
     audio = mic_recorder(start_prompt="🎤 녹음 시작", stop_prompt="🛑 녹음 완료", key="word_recorder")
 
-# --- 5. Step 3: 시각적 대조 및 분석 (핵심 단계) ---
+# --- 5. Step 3: 시각적 대조 및 분석 ---
 if audio:
     audio_bytes = audio['bytes']
     with open("learner_raw.wav", "wb") as f:
         f.write(audio_bytes)
     
-    # 오디오 로드 및 정규화
-    y_l_raw, sr = librosa.load("learner_raw.wav", sr=22050)
-    
-    # TTS로 원어민 오디오 생성 및 로드
-    tts = gTTS(text=target_word, lang='en')
-    tts.save("native_target.mp3")
-    audio_n_seg = AudioSegment.from_file("native_target.mp3")
-    
-    # 무음 제거 및 구간 추출 (Trim)
-    l_seg = AudioSegment.from_file("learner_raw.wav")
-    l_start, l_end = get_speech_bounds(l_seg)
-    n_start, n_end = get_speech_bounds(audio_n_seg)
-    
-    final_l = l_seg[l_start:l_e] if 'l_e' in locals() else l_seg[l_start:l_end]
-    final_n = audio_n_seg[n_start:n_end]
-    
-    final_l.export("l_trimmed.wav", format="wav")
-    final_n.export("n_trimmed.wav", format="wav")
-    
-    y_l, _ = librosa.load("l_trimmed.wav", sr=sr)
-    y_n, _ = librosa.load("n_trimmed.wav", sr=sr)
-    
-    # 정규화
-    y_l = normalize_audio(y_l)
-    y_n = normalize_audio(y_n)
+    # [수정] 안내 메시지 및 스피너
+    with st.spinner("강세 패턴을 분석 중입니다..."):
+        try:
+            # 오디오 로드
+            y_l_raw, sr = librosa.load("learner_raw.wav", sr=22050)
+            
+            # TTS 원어민 오디오 생성
+            tts = gTTS(text=target_word, lang='en')
+            tts.save("native_target.mp3")
+            audio_n_seg = AudioSegment.from_file("native_target.mp3")
+            
+            # 무음 제거 및 구간 추출
+            l_seg = AudioSegment.from_file("learner_raw.wav")
+            l_start, l_end = get_speech_bounds(l_seg)
+            n_start, n_end = get_speech_bounds(audio_n_seg)
+            
+            # [수정] l_e 오타 수정 및 안전한 슬라이싱
+            final_l = l_seg[l_start:l_end]
+            final_n = audio_n_seg[n_start:n_end]
+            
+            final_l.export("l_trimmed.wav", format="wav")
+            final_n.export("n_trimmed.wav", format="wav")
+            
+            y_l, _ = librosa.load("l_trimmed.wav", sr=sr)
+            y_n, _ = librosa.load("n_trimmed.wav", sr=sr)
+            
+            y_l = normalize_audio(y_l)
+            y_n = normalize_audio(y_n)
 
-    # UI 출력
-    st.divider()
-    st.success("✅ 분석 준비 완료! 원어민의 강세 위치와 비교해 보세요.")
-    
-    tab_wave, tab_analysis = st.tabs(["📊 파형 대조 분석", "📝 학습 성찰 기록"])
-    
-    with tab_wave:
-        # 파형 대조 그래프
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), sharex=False)
-        
-        # 학습자 파형
-        librosa.display.waveshow(y_l, sr=sr, ax=ax1, color='#1f77b4', alpha=0.7)
-        ax1.set_title(f"My Voice: {target_word}", fontsize=12)
-        ax1.set_ylabel("Amplitude")
-        
-        # 원어민 파형
-        librosa.display.waveshow(y_n, sr=sr, ax=ax2, color='#A9A9A9', alpha=0.6)
-        ax2.set_title(f"Native Voice: {target_word}", fontsize=12)
-        ax2.set_ylabel("Amplitude")
-        
-        # 강세 Peak 표시 (최대 진폭 지점)
-        peak_l = np.argmax(np.abs(y_l))
-        peak_n = np.argmax(np.abs(y_n))
-        ax1.axvline(x=librosa.samples_to_time(peak_l, sr=sr), color='red', linestyle='--', label='My Stress')
-        ax2.axvline(x=librosa.samples_to_time(peak_n, sr=sr), color='red', linestyle='--', label='Target Stress')
-        
-        plt.tight_layout()
-        st.pyplot(fig)
-        
-        # 상세 수치 비교
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.metric("단어 길이 (초)", f"{len(y_l)/sr:.2f}s", delta=f"{len(y_l)/sr - len(y_n)/sr:.2f}s")
-        with c2:
-            # 강세 일치도 점수
-            stress_score = calculate_stress_score(y_n, y_l, sr)
-            st.metric("강세 패턴 일치도", f"{stress_score}점")
-        with c3:
-            st.write("**강세 가이드:**")
-            st.info(selected_level.split("(")[1].replace(")", ""))
+            st.divider()
+            st.success("✅ 분석 완료! 파형의 산(Peak) 위치를 대조해 보세요.")
+            
+            tab_wave, tab_analysis = st.tabs(["📊 파형 대조 분석", "📝 학습 성찰 기록"])
+            
+            with tab_wave:
+                fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6))
+                
+                # 학습자 파형
+                librosa.display.waveshow(y_l, sr=sr, ax=ax1, color='#1f77b4', alpha=0.7)
+                ax1.set_title(f"My Voice Stress Pattern", fontsize=10)
+                
+                # 원어민 파형
+                librosa.display.waveshow(y_n, sr=sr, ax=ax2, color='#A9A9A9', alpha=0.6)
+                ax2.set_title(f"Native Voice Stress Pattern", fontsize=10)
+                
+                # [수정] 강세 Peak 표시 (가장 큰 진폭 지점)
+                if len(y_l) > 0 and len(y_n) > 0:
+                    peak_l_time = librosa.samples_to_time(np.argmax(np.abs(y_l)), sr=sr)
+                    peak_n_time = librosa.samples_to_time(np.argmax(np.abs(y_n)), sr=sr)
+                    ax1.axvline(x=peak_l_time, color='red', linestyle='--', alpha=0.8)
+                    ax2.axvline(x=peak_n_time, color='red', linestyle='--', alpha=0.8)
+                
+                plt.tight_layout()
+                st.pyplot(fig)
+                
+                # 지표 출력
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.metric("단어 길이 (초)", f"{len(y_l)/sr:.2f}s")
+                with c2:
+                    stress_score = calculate_stress_score(y_n, y_l, sr)
+                    st.metric("강세 일치도", f"{stress_score}점")
+                with c3:
+                    # [수정] NameError 해결: selected_label 사용 및 예외처리
+                    try:
+                        guide = selected_label.split("(")[1].replace(")", "")
+                        st.info(f"💡 **강세 팁:** {guide}")
+                    except:
+                        st.info("💡 강세 위치를 확인하세요.")
 
-    with tab_analysis:
-        st.write("### ✍️ 예비 교사 분석 노트 (Github 제출용)")
-        analysis_text = st.text_area("파형을 보고 느낀 원어민과의 차이점과 개선 방안을 적어보세요:", 
-                                     placeholder="예: 원어민은 첫 음절에서 진폭이 크게 솟구치는데, 나는 두 번째 음절이 더 높게 나타남. 강세 위치 수정 필요.")
-        
-        if st.button("복사용 마크다운 생성"):
-            md_output = f"### Word Stress Analysis: {target_word}\n- **Stress Score:** {stress_score}점\n- **Duration:** {len(y_l)/sr:.2f}s\n- **Reflection:** {analysis_text}"
-            st.code(md_output, language='markdown')
+            with tab_analysis:
+                st.write("### ✍️ 예비 교사 분석 노트")
+                analysis_text = st.text_area("파형 분석 결과를 기록하세요:", placeholder="예: 원어민은 1음절에 강한 에너지가 집중됨.")
+                
+                if st.button("마크다운 복사용 텍스트 생성"):
+                    md_output = f"### Analysis: {target_word}\n- **Score:** {stress_score}\n- **Reflection:** {analysis_text}"
+                    st.code(md_output)
 
-# --- 6. 마무리 및 파일 정리 ---
-finally_paths = ["temp_entry.wav", "native.mp3", "learner_raw.wav", "native_target.mp3", "l_trimmed.wav", "n_trimmed.wav"]
+        except Exception as e:
+            st.error(f"분석 중 오류가 발생했습니다: {e}")
+
+# --- 6. 파일 정리 (안전한 삭제) ---
+finally_paths = ["native.mp3", "learner_raw.wav", "native_target.mp3", "l_trimmed.wav", "n_trimmed.wav"]
 for p in finally_paths:
     if os.path.exists(p):
         try: os.remove(p)
