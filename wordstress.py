@@ -16,32 +16,34 @@ st.markdown("""
     .stSlider { padding-left: 0px; padding-right: 0px; }
     .main .block-container { padding-top: 1rem; }
     
-    /* [핵심] 모든 버튼의 폰트와 크기를 강제 통일 */
-    button {
-        height: 3.5em !important;
+    /* [핵심] 모든 버튼과 녹음 위젯의 높이 및 폰트를 강제 일치 */
+    .stButton button, .stMicrophone button, div[data-testid="stVerticalBlock"] button {
+        height: 54px !important; /* 높이 고정 */
         font-size: 16px !important; /* 글자 크기 고정 */
         font-weight: bold !important;
         border-radius: 10px !important;
+        width: 100% !important;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
-        gap: 8px !important; /* 아이콘과 글자 사이 간격 */
+        margin: 0 !important;
     }
 
-    /* 가로 배치를 위한 컬럼 내부 버튼 너비 강제화 */
-    [data-testid="stHorizontalBlock"] [data-testid="stVerticalBlock"] button {
-        width: 100% !important;
+    /* 왼쪽 녹음 버튼 컨테이너 조절 */
+    div[data-testid="stHorizontalBlock"] > div:nth-child(1) {
+        display: flex;
+        align-items: center;
     }
     
-    /* 왼쪽 녹음 버튼 (빨간색) */
-    [data-testid="stHorizontalBlock"] > div:nth-child(1) button {
+    /* 녹음 버튼 색상 (빨간색) */
+    div[data-testid="stHorizontalBlock"] > div:nth-child(1) button {
         background-color: #ff4b4b !important;
         color: white !important;
         border: none !important;
     }
     
-    /* 오른쪽 리셋 버튼 (회색) */
-    [data-testid="stHorizontalBlock"] > div:nth-child(2) button {
+    /* 오른쪽 리셋 버튼 색상 (연한 회색) */
+    div[data-testid="stHorizontalBlock"] > div:nth-child(2) button {
         background-color: #f0f2f6 !important;
         color: #31333F !important;
         border: 1px solid #dcdcdc !important;
@@ -49,7 +51,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 세션 상태 초기화 (리셋 키 포함)
+# 세션 상태 초기화
 if 'reset_key' not in st.session_state: st.session_state.reset_key = 0
 if 'last_audio_id' not in st.session_state: st.session_state.last_audio_id = None
 if 'analysis_done' not in st.session_state: st.session_state.analysis_done = False
@@ -103,13 +105,12 @@ if st.button("🔊 원어민 발음 듣기"):
 
 st.divider()
 
-# --- [4] 리셋 및 녹음 컨트롤 (버튼 디자인 완전 일치) ---
+# --- [4] 핵심 수정: 버튼 가로 5:5 정밀 배치 ---
 st.subheader(f"🎯 연습: {target_word.upper()}")
 
 col_l, col_r = st.columns(2)
 
 with col_l:
-    # 텍스트와 아이콘 구성을 단순화하여 리셋 버튼과 규격 맞춤
     audio = mic_recorder(
         start_prompt="🎤 녹음 시작",
         stop_prompt="🛑 완료",
@@ -159,7 +160,7 @@ if audio:
         st.session_state.final_y_l = y_full[int(trim_range[0]*sr_f):int(trim_range[1]*sr_f)]
         st.session_state.current_sr = sr_f
 
-# --- [6] 결과 분석 출력 ---
+# --- [6] 분석 결과 출력 ---
 if st.session_state.get('analysis_done') and st.session_state.final_y_l is not None:
     y_l, sr = st.session_state.final_y_l, st.session_state.current_sr
     try:
