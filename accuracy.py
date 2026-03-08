@@ -28,26 +28,22 @@ def normalize_pitch(f0):
     return (f0 - mu) / sigma
 
 def calculate_intonation_score(f0_n, f0_l):
-    """시간축 정규화 및 피크 일치도 기반 세분화 점수 산출"""
     vec_n = f0_n[~np.isnan(f0_n)]
     vec_l = f0_l[~np.isnan(f0_l)]
-    
     if len(vec_n) < 10 or len(vec_l) < 10: return 0
-
-    # [Step 1] 시간축 정규화 (100 포인트로 통일)
-    target_pts = 100
+    
+    # 시간축 정규화 (100 포인트)
     x_n = np.linspace(0, 1, len(vec_n))
     x_l = np.linspace(0, 1, len(vec_l))
-    x_new = np.linspace(0, 1, target_pts)
+    x_new = np.linspace(0, 1, 100)
     
-    norm_n = interp1d(x_n, vec_n, kind='linear')(x_new)
-    norm_l = interp1d(x_l, vec_l, kind='linear')(x_new)
+    norm_n = interp1d(x_n, vec_n, kind='linear', fill_value="extrapolate")(x_new)
+    norm_l = interp1d(x_l, vec_l, kind='linear', fill_value="extrapolate")(x_new)
     
-    # [Step 2] 값 정규화 (Z-score)
     z_n = (norm_n - np.mean(norm_n)) / (np.std(norm_n) + 1e-6)
     z_l = (norm_l - np.mean(norm_l)) / (np.std(norm_l) + 1e-6)
 
-    # [Step 3] 피크(강세) 감지 (가중치 40%)
+    # 피크 감지
     peaks_n, _ = find_peaks(z_n, distance=10, prominence=0.5)
     peaks_l, _ = find_peaks(z_l, distance=10, prominence=0.5)
     
@@ -56,10 +52,8 @@ def calculate_intonation_score(f0_n, f0_l):
         match_count = sum(1 for p_n in peaks_n if any(abs(p_n - p_l) <= 10 for p_l in peaks_l))
         peak_score = (match_count / len(peaks_n)) * 100
     
-    # [Step 4] 전체 패턴 상관관계 (가중치 60%)
     corr, _ = pearsonr(z_n, z_l)
     pattern_score = max(0, corr) * 100 if not np.isnan(corr) else 0
-    
     return int((pattern_score * 0.6) + (peak_score * 0.4))
 
 # --- 2. 설정 및 세션 초기화 ---
@@ -86,11 +80,19 @@ with col_box:
 if audio:
     st.divider()
     audio_bytes = audio['bytes']
-    y_full, sr_f = librosa.load(io.BytesIO(audio_bytes), sr=22050)
+    
+    # [해결] LibsndfileError 방지를 위해 임시 파일로 먼저 저장
+    with open("temp_raw.wav", "wb") as f:
+        f.write(audio_bytes)
+    
+    # 이제 파일 경로를 통해 안전하게 로드
+    y_full, sr_f = librosa.load("temp_raw.wav", sr=22050)
     duration_sec = len(y_full) / sr_f
     
     st.subheader("✂️ 발화 구간 설정")
-    v_s_idx, v_e_idx = get_speech_bounds(AudioSegment.from_file(io.BytesIO(audio_bytes)))
+    # pydub 객체 생성 시에도 임시 파일을 사용
+    full_audio_seg = AudioSegment.from_file("temp_raw.wav")
+    v_s_idx, v_e_idx = get_speech_bounds(full_audio_seg)
     trim_range = st.slider("분석할 목소리 구간:", 0.0, duration_sec, (float(v_s_idx/1000), float(v_e_idx/1000)), step=0.01)
 
     fig_prev, ax = plt.subplots(figsize=(12, 3))
@@ -108,34 +110,30 @@ if audio:
 # --- 4. 상세 분석 결과 ---
 if st.session_state.analysis_done:
     try:
-        # 파일 경로 안전하게 관리
         path_l = "temp_l.wav"; path_n_mp3 = "temp_n.mp3"; path_n_wav = "temp_n.wav"; path_stt = "temp_stt.wav"
         
-        full_audio = AudioSegment.from_file(io.BytesIO(st.session_state.final_audio_bytes))
+        # 임시 파일에서 AudioSegment 생성
+        full_audio = AudioSegment.from_file("temp_raw.wav")
         s_ms, e_ms = st.session_state.final_start * 1000, st.session_state.final_end * 1000
         cropped = full_audio[s_ms:e_ms]
         
-        # 학습자 파일 저장
         l_s, l_e = get_speech_bounds(cropped, buffer_ms=50)
         final_l = cropped[l_s:l_e]; final_l.export(path_l, format="wav")
         full_audio.export(path_stt, format="wav")
         
-        # 원어민 파일 생성 (오류 방지 로직)
-        tts = gTTS(text=target_text, lang='en')
-        tts.save(path_n_mp3)
+        # 원어민 음성 생성
+        tts = gTTS(text=target_text, lang='en'); tts.save(path_n_mp3)
         if os.path.exists(path_n_mp3):
             native_raw = AudioSegment.from_file(path_n_mp3)
             n_s, n_e = get_speech_bounds(native_raw, silence_thresh=-35)
             final_n = native_raw[n_s:n_e]; final_n.export(path_n_wav, format="wav")
-        else:
-            st.error("원어민 음성 생성 실패"); st.stop()
 
         y_l, sr_curr = librosa.load(path_l, sr=22050); y_n, _ = librosa.load(path_n_wav, sr=sr_curr)
 
         st.divider()
-        c_a1, c_a2 = st.columns(2)
-        with c_a1: st.write("🎙️ **나의 발음**"); st.audio(path_l)
-        with c_a2: st.write("🔊 **원어민 발음**"); st.audio(path_n_wav)
+        ac1, ac2 = st.columns(2)
+        with ac1: st.write("🎙️ **나의 발음**"); st.audio(path_l)
+        with ac2: st.write("🔊 **원어민 발음**"); st.audio(path_n_wav)
 
         tab1, tab2, tab3, tab4 = st.tabs(["🎯 AI 점수", "⏱️ 유창성", "🔊 음파 대조", "📈 피치 분석"])
 
@@ -153,25 +151,21 @@ if st.session_state.analysis_done:
 
             st.write("---")
             if st.button("🚀 정규화 및 피크 분석 실행", use_container_width=True):
-                # 세분화된 점수 계산
                 score = calculate_intonation_score(f0_n_f, f0_l_f)
                 
-                # 시각화를 위한 시간축 정렬 곡선 생성
+                # 시각화 데이터 생성
                 vec_n = f0_n_f[~np.isnan(f0_n_f)]; vec_l = f0_l_f[~np.isnan(f0_l_f)]
-                norm_n = interp1d(np.linspace(0,1,len(vec_n)), normalize_pitch(vec_n))(np.linspace(0,1,100))
-                norm_l = interp1d(np.linspace(0,1,len(vec_l)), normalize_pitch(vec_l))(np.linspace(0,1,100))
+                norm_n = interp1d(np.linspace(0,1,len(vec_n)), normalize_pitch(vec_n), fill_value="extrapolate")(np.linspace(0,1,100))
+                norm_l = interp1d(np.linspace(0,1,len(vec_l)), normalize_pitch(vec_l), fill_value="extrapolate")(np.linspace(0,1,100))
                 
                 fig_ov, axo = plt.subplots(figsize=(12, 4))
                 axo.plot(np.linspace(0,1,100), norm_n, color='lightgray', lw=3, label='Native', alpha=0.7)
                 axo.plot(np.linspace(0,1,100), norm_l, color='#1f77b4', lw=2, label='Learner')
                 axo.set_title("Time-Aligned Melody Pattern"); axo.legend(); st.pyplot(fig_ov)
-                
-                st.metric("억양 유사도 점수 (피크 가중치 적용)", f"{score}점")
-                if score >= 75: st.success("🌟 강세 위치와 멜로디가 매우 자연스럽습니다!")
-                elif score >= 45: st.info("👍 흐름은 비슷합니다. 주요 단어의 강세(Peak)를 더 명확히 해보세요.")
-                else: st.warning("🧐 억양의 높낮이 변화가 원어민과 많이 다릅니다. 노래하듯 리듬을 타보세요.")
+                st.metric("억양 유사도 점수", f"{score}점")
 
-    except Exception as e: st.error(f"분석 중 오류 발생: {e}")
+    except Exception as e: st.error(f"분석 오류: {e}")
     finally:
-        for f in [path_l, path_n_mp3, path_n_wav, path_stt, "temp_preview.wav"]:
+        # 임시 파일들 삭제
+        for f in [path_l, path_n_mp3, path_n_wav, path_stt, "temp_preview.wav", "temp_raw.wav"]:
             if os.path.exists(f): os.remove(f)
