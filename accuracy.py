@@ -11,13 +11,17 @@ from difflib import SequenceMatcher
 
 # --- 유틸리티 함수 ---
 def get_speech_bounds(audio_segment, silence_thresh=-40, min_silence_len=100, buffer_ms=100):
-    nonsilent_intervals = detect_nonsilent(audio_segment, 
-                                           min_silence_len=min_silence_len, 
-                                           silence_thresh=silence_thresh)
+    nonsilent_intervals = detect_nonsilent(audio_segment, min_silence_len=min_silence_len, silence_thresh=silence_thresh)
     if not nonsilent_intervals: return 0, len(audio_segment)
     start_trim = max(0, nonsilent_intervals[0][0] - buffer_ms)
     end_trim = min(len(audio_segment), nonsilent_intervals[-1][1] + 50)
     return start_trim, end_trim
+
+def normalize_pitch(f0):
+    """피치 데이터를 Z-score 정규화하여 패턴 위주로 비교 가능하게 함"""
+    mu = np.nanmean(f0)
+    sigma = np.nanstd(f0)
+    return (f0 - mu) / sigma if sigma != 0 else f0 - mu
 
 # --- 스트림릿 설정 ---
 st.set_page_config(page_title="AI 발음 분석기", layout="wide")
@@ -29,6 +33,7 @@ if 'start_time' not in st.session_state:
 if 'end_time' not in st.session_state:
     st.session_state.end_time = 0.0
 
+# [샘플 문장 리스트 생략 - 이전과 동일]
 sample_sentences = {
     "Level 01: (인사/기초)": "I am on my way.",
     "Level 02: (일상/기초)": "Nice room you have.",
@@ -95,8 +100,6 @@ if st.session_state.analysis_done:
     try:
         audio_stream = io.BytesIO(st.session_state.audio_bytes)
         full_audio = AudioSegment.from_file(audio_stream)
-        
-        # 1. 학습자 오디오 크롭 및 저장
         start_ms, end_ms = st.session_state.start_time * 1000, st.session_state.end_time * 1000
         cropped_audio = full_audio[start_ms:end_ms]
         l_s, l_e = get_speech_bounds(cropped_audio, buffer_ms=100)
@@ -104,7 +107,6 @@ if st.session_state.analysis_done:
         final_learner.export("temp_learner.wav", format="wav")
         full_audio.export("temp_stt.wav", format="wav")
         
-        # 2. 원어민 오디오 생성 및 저장
         tts = gTTS(text=target_text, lang='en')
         tts.save("temp_native.mp3")
         native_raw = AudioSegment.from_file("temp_native.mp3", format="mp3")
@@ -114,74 +116,40 @@ if st.session_state.analysis_done:
 
         y_learner, sr_l = librosa.load("temp_learner.wav", sr=22050)
         y_native, _ = librosa.load("temp_native.wav", sr=sr_l)
-
-        learner_speech_dur = len(final_learner) / 1000.0
-        native_speech_dur = len(final_native) / 1000.0
-
-        # --- [추가] 탭 상단 공통 오디오 플레이어 ---
+        
+        # 공통 오디오 플레이어
         st.divider()
-        audio_col1, audio_col2 = st.columns(2)
-        with audio_col1:
-            st.write("🎙️ **나의 발음 (조정된 구간)**")
-            st.audio("temp_learner.wav")
-        with audio_col2:
-            st.write("🔊 **원어민 발음**")
-            st.audio("temp_native.wav")
-        st.write("")
+        a_c1, a_c2 = st.columns(2)
+        with a_c1: st.write("🎙️ **나의 발음**"); st.audio("temp_learner.wav")
+        with a_c2: st.write("🔊 **원어민 발음**"); st.audio("temp_native.wav")
 
         tab1, tab2, tab3, tab4 = st.tabs(["🎯 AI 점수", "⏱️ 유창성 분석", "🔊 음파 대조", "📈 피치 분석"])
 
         with tab1:
             r = sr.Recognizer()
             with sr.AudioFile("temp_stt.wav") as source:
-                r.adjust_for_ambient_noise(source, duration=0.5)
-                audio_data = r.record(source)
+                r.adjust_for_ambient_noise(source, duration=0.5); audio_data = r.record(source)
                 try:
                     transcript = r.recognize_google(audio_data, language='en-US')
                     clean_target = target_text.lower().replace('.', '').replace(',', '').replace('?', '')
                     score = SequenceMatcher(None, clean_target, transcript.lower()).ratio()
-                    res_col1, res_col2 = st.columns([1, 2])
-                    with res_col1:
-                        st.markdown(f"""<div style="background-color: #e8f4f8; border-left: 5px solid #1f77b4; padding: 20px; border-radius: 8px; height: 120px;"><div style="color: #1f77b4; font-weight: bold;">정확도 점수</div><h1 style="margin: 0; color: #1f77b4;">{int(score * 100)}점</h1></div>""", unsafe_allow_html=True)
-                    with res_col2:
-                        st.markdown(f"""<div style="background-color: #eafaf1; border-left: 5px solid #2ecc71; padding: 20px; border-radius: 8px; height: 120px;"><div style="color: #27ae60; font-weight: bold;">AI 인식 결과</div><div style="font-size: 1.4rem; color: #1e8449; font-weight: 500;">{transcript}</div></div>""", unsafe_allow_html=True)
+                    r_c1, r_c2 = st.columns([1, 2])
+                    with r_c1: st.markdown(f"""<div style="background-color: #e8f4f8; border-left: 5px solid #1f77b4; padding: 20px; border-radius: 8px; height: 120px;"><div style="color: #1f77b4; font-weight: bold;">정확도 점수</div><h1 style="margin: 0; color: #1f77b4;">{int(score * 100)}점</h1></div>""", unsafe_allow_html=True)
+                    with r_c2: st.markdown(f"""<div style="background-color: #eafaf1; border-left: 5px solid #2ecc71; padding: 20px; border-radius: 8px; height: 120px;"><div style="color: #27ae60; font-weight: bold;">AI 인식 결과</div><div style="font-size: 1.4rem; color: #1e8449; font-weight: 500;">{transcript}</div></div>""", unsafe_allow_html=True)
                 except: st.error("인식 실패")
 
         with tab2:
-            st.subheader("순수 발화 구간 분석 (Detected Pure Speech)")
+            st.subheader("순수 발화 구간 분석")
+            l_dur, n_dur = len(final_learner)/1000.0, len(final_native)/1000.0
             fig_dur, (ax_n, ax_l) = plt.subplots(2, 1, figsize=(12, 5))
             librosa.display.waveshow(y_native, sr=sr_l, ax=ax_n, color='lightgray', alpha=0.5)
-            ax_n.axvline(x=0, color='red', linestyle='--'); ax_n.axvline(x=native_speech_dur, color='red', linestyle='--')
-            ax_n.set_title(f"Native Speaker (Pure: {native_speech_dur:.2f}s)")
+            ax_n.axvline(x=0, color='red', linestyle='--'); ax_n.axvline(x=n_dur, color='red', linestyle='--')
             librosa.display.waveshow(y_learner, sr=sr_l, ax=ax_l, color='skyblue', alpha=0.7)
-            ax_l.axvline(x=0, color='blue', linestyle='--'); ax_l.axvline(x=learner_speech_dur, color='blue', linestyle='--')
-            ax_l.set_title(f"Learner (Pure: {learner_speech_dur:.2f}s)")
+            ax_l.axvline(x=0, color='blue', linestyle='--'); ax_l.axvline(x=l_dur, color='blue', linestyle='--')
             plt.tight_layout(); st.pyplot(fig_dur)
-            
-            diff_ratio = ((learner_speech_dur / native_speech_dur) - 1) * 100
+            diff_ratio = ((l_dur / n_dur) - 1) * 100
             diff_text = f"{'+' if diff_ratio >= 0 else ''}{int(diff_ratio)}%"
-            
-            if abs(diff_ratio) <= 10:
-                st.success(f"✅ **Optimal: 원어민과 거의 유사한 속도입니다. ({diff_text})**")
-            elif 10 < diff_ratio <= 25:
-                st.info(f"🟢 **Acceptable: 명확하고 자연스러운 속도입니다. ({diff_text})**")
-            elif diff_ratio > 25:
-                st.warning(f"🟠 **Slow: 조금 더 연음(Linking)을 활용해 빠르게 읽어보세요. ({diff_text})**")
-            else:
-                st.error(f"🔴 **Too Fast: 발음이 뭉개질 수 있으니 조금만 천천히 읽어보세요. ({diff_text})**")
-
-            with st.expander("📚 발화 속도 해석 근거 및 참고문헌"):
-                st.markdown("""
-                **1. 해석 가이드라인:**
-                * **±10% 이내:** 원어민 수준의 유창성 (Native-like Fluency).
-                * **+10% ~ +25%:** 이해 가능한 수준의 안정적인 발화 (Intelligible).
-                * **+25% 초과:** 과도한 휴지(Pause) 혹은 음소 연장으로 인한 유창성 저하.
-                
-                **2. 참고 문헌 및 표준 지침:**
-                * **American Council on the Teaching of Foreign Languages (2012).** *ACTFL Proficiency Guidelines 2012*.
-                * **Munro, M. J., & Derwing, T. M. (1995).** Foreign accent, comprehensibility, and intelligibility: Evidence from L2 learners. *Language Learning*.
-                * **Derwing, T. M., & Munro, M. J. (2001).** What makes accent-free speakers? *Journal of Phonetics*.
-                """)
+            st.info(f"💡 원어민 대비 발화 속도 편차: **{diff_text}**")
 
         with tab3:
             fig_wave, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 4))
@@ -190,14 +158,33 @@ if st.session_state.analysis_done:
             plt.tight_layout(); st.pyplot(fig_wave)
 
         with tab4:
+            st.subheader("억양 멜로디 비교")
             f0_l, v_l, p_l = librosa.pyin(y_learner, fmin=75, fmax=400, hop_length=128)
             f0_n, v_n, p_n = librosa.pyin(y_native, fmin=60, fmax=400, hop_length=128)
-            f0_l_filtered = np.where(v_l & (p_l > 0.25) & (f0_l > 80), f0_l, np.nan)
-            f0_n_filtered = np.where(v_n & (p_n > 0.05), f0_n, np.nan)
-            fig_pitch, (ax_n, ax_l) = plt.subplots(1, 2, figsize=(15, 5), sharey=True)
-            ax_n.plot(librosa.times_like(f0_n, hop_length=128), f0_n_filtered, color='lightgray', linewidth=3)
-            ax_l.plot(librosa.times_like(f0_l, hop_length=128), f0_l_filtered, color='#1f77b4', linewidth=2.5)
-            st.pyplot(fig_pitch)
+            f0_l_filt = np.where(v_l & (p_l > 0.25) & (f0_l > 80), f0_l, np.nan)
+            f0_n_filt = np.where(v_n & (p_n > 0.05), f0_n, np.nan)
+            
+            # 절대값 그래프
+            fig_abs, (ax_n1, ax_l1) = plt.subplots(1, 2, figsize=(15, 4), sharey=True)
+            ax_n1.plot(librosa.times_like(f0_n, hop_length=128), f0_n_filt, color='lightgray', linewidth=3)
+            ax_l1.plot(librosa.times_like(f0_l, hop_length=128), f0_l_filt, color='#1f77b4', linewidth=2.5)
+            ax_n1.set_title("Absolute Pitch (Native)"); ax_l1.set_title("Absolute Pitch (Learner)")
+            ax_n1.set_ylabel("Frequency (Hz)")
+            st.pyplot(fig_abs)
+            
+            # [수정] 정규화 버튼 및 정규화 그래프 레이아웃
+            if st.checkbox("📈 상대적 억양 패턴(Normalized) 비교하기"):
+                st.write("---")
+                st.markdown("**패턴 대조 (Z-score Normalization)**: 절대적인 높낮이 차이를 제거하고 억양의 흐름만 비교합니다.")
+                f0_n_norm = normalize_pitch(f0_n_filt)
+                f0_l_norm = normalize_pitch(f0_l_filt)
+                
+                fig_norm, ax_norm = plt.subplots(figsize=(12, 4))
+                ax_norm.plot(librosa.times_like(f0_n, hop_length=128), f0_n_norm, color='lightgray', linewidth=2, label='Native', alpha=0.8)
+                ax_norm.plot(librosa.times_like(f0_l, hop_length=128), f0_l_norm, color='#1f77b4', linewidth=2, label='You')
+                ax_norm.set_title("Intonation Pattern Comparison (Normalized)")
+                ax_norm.set_ylabel("Relative Pitch")
+                ax_norm.legend(); plt.tight_layout(); st.pyplot(fig_norm)
 
     except Exception as e: st.error(f"오류: {e}")
     finally:
