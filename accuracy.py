@@ -11,14 +11,13 @@ from difflib import SequenceMatcher
 
 # --- 유틸리티 함수 ---
 def get_speech_bounds(audio_segment, silence_thresh=-40, min_silence_len=100, buffer_ms=100):
-    """실제 목소리 시작/끝 감지 및 첫 음절 보호를 위한 버퍼 추가"""
+    """실제 목소리 시작/끝 감지"""
     nonsilent_intervals = detect_nonsilent(audio_segment, 
                                            min_silence_len=min_silence_len, 
                                            silence_thresh=silence_thresh)
     if not nonsilent_intervals:
         return 0, len(audio_segment)
     
-    # 시작점은 버퍼만큼 앞으로(첫 음절 보호), 끝점은 그대로
     start_trim = max(0, nonsilent_intervals[0][0] - buffer_ms)
     end_trim = min(len(audio_segment), nonsilent_intervals[-1][1] + 50)
     return start_trim, end_trim
@@ -101,25 +100,26 @@ if st.session_state.analysis_done:
         audio_stream = io.BytesIO(st.session_state.audio_bytes)
         full_audio = AudioSegment.from_file(audio_stream)
         
-        # 1. 학습자 오디오: 수동 선택 구간 + VAD 정밀 크롭
+        # 1. 학습자 오디오 크롭
         start_ms, end_ms = st.session_state.start_time * 1000, st.session_state.end_time * 1000
         cropped_audio = full_audio[start_ms:end_ms]
-        l_s, l_e = get_speech_bounds(cropped_audio, buffer_ms=100) # 100ms 버퍼로 첫 음절 보호
-        final_learner = cropped_audio[l_s:l_e]
+        l_s, l_e = get_speech_bounds(cropped_audio, buffer_ms=100)
+        final_learner = cropped_audio[l_s:l_e] # 감지된 시작점부터 크롭하여 0초 정렬
         final_learner.export("temp_learner.wav", format="wav")
         full_audio.export("temp_stt.wav", format="wav")
         
-        # 2. 원어민 오디오: 강력한 공백 제거
+        # 2. 원어민 오디오 크롭
         tts = gTTS(text=target_text, lang='en')
         tts.save("temp_native.mp3")
         native_raw = AudioSegment.from_file("temp_native.mp3", format="mp3")
-        n_start, n_end = get_speech_bounds(native_raw, silence_thresh=-35, buffer_ms=0) # 원어민은 버퍼 없이 타이트하게
+        n_start, n_end = get_speech_bounds(native_raw, silence_thresh=-35, buffer_ms=0)
         final_native = native_raw[n_start:n_end]
         final_native.export("temp_native.wav", format="wav")
 
         y_learner, sr_l = librosa.load("temp_learner.wav", sr=22050)
         y_native, _ = librosa.load("temp_native.wav", sr=sr_l)
 
+        # 3. [수정] 이미 0초에 맞춰진 파일이므로 시작점 표시 로직 간소화
         learner_speech_dur = len(final_learner) / 1000.0
         native_speech_dur = len(final_native) / 1000.0
 
@@ -143,14 +143,18 @@ if st.session_state.analysis_done:
 
         with tab2:
             st.subheader("순수 발화 구간 분석 (Detected Pure Speech)")
+            # [수정] 두 파형 모두 0초부터 시작하도록 시각적 정렬
             fig_dur, (ax_n, ax_l) = plt.subplots(2, 1, figsize=(12, 5))
+            
             librosa.display.waveshow(y_native, sr=sr_l, ax=ax_n, color='lightgray', alpha=0.5)
+            ax_n.axvline(x=0, color='red', linestyle='--') # 0초 고정
+            ax_n.axvline(x=native_speech_dur, color='red', linestyle='--')
             ax_n.set_title(f"Native Speaker (Pure: {native_speech_dur:.2f}s)")
-            ax_n.axvline(x=0, color='red', linestyle='--') # 정렬되어 시작하므로 0 고정
             
             librosa.display.waveshow(y_learner, sr=sr_l, ax=ax_l, color='skyblue', alpha=0.7)
+            ax_l.axvline(x=0, color='blue', linestyle='--') # 0초 고정 (버퍼 포함 시작점)
+            ax_l.axvline(x=learner_speech_dur, color='blue', linestyle='--')
             ax_l.set_title(f"Learner (Pure: {learner_speech_dur:.2f}s)")
-            ax_l.axvline(x=0.1, color='blue', linestyle='--', label="Buffer Applied") # 버퍼 적용 지점 표시
             
             plt.tight_layout(); st.pyplot(fig_dur)
             ratio = (learner_speech_dur / native_speech_dur) * 100 if native_speech_dur > 0 else 0
