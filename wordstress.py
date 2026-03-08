@@ -8,31 +8,33 @@ from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 from scipy.interpolate import interp1d
 
-# --- [1] 모바일 정밀 디자인: 강제 규격 통일 ---
+# --- [1] 모바일 정밀 디자인: 박스 크기 및 배치 완전 고정 ---
 st.set_page_config(page_title="Word Stress Master", layout="centered")
 
 st.markdown("""
     <style>
     .main .block-container { padding-top: 1rem; }
 
-    /* [핵심] 모든 버튼의 높이와 폰트를 절대 수치로 강제 고정 */
+    /* [핵심] 1. 버튼을 감싸는 컬럼의 너비를 50:50으로 강제 고정 */
+    [data-testid="stHorizontalBlock"] > div {
+        flex-basis: 50% !important;
+        min-width: 50% !important;
+        max-width: 50% !important;
+    }
+
+    /* [핵심] 2. 버튼의 외형(높이, 폰트, 여백)을 픽셀 단위로 하드코딩 */
     button, .stMicrophone button {
-        height: 54px !important;
-        font-size: 16px !important;
+        height: 52px !important;      /* 높이 52px 고정 */
+        font-size: 16px !important;    /* 글자 크기 16px 고정 */
         font-weight: 600 !important;
         border-radius: 10px !important;
-        width: 100% !important;
+        width: 100% !important;        /* 컬럼 너비를 꽉 채움 */
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
-        box-shadow: none !important;
         margin: 0 !important;
-    }
-
-    /* 버튼을 감싸는 컬럼의 정렬을 강제로 일치시킴 */
-    [data-testid="stHorizontalBlock"] {
-        align-items: center !important;
-        gap: 10px !important;
+        padding: 0 !important;
+        white-space: nowrap !important; /* 글자가 길어져도 줄바꿈 방지 */
     }
 
     /* 녹음 버튼 (빨간색) */
@@ -49,7 +51,7 @@ st.markdown("""
         border: 1px solid #dcdcdc !important;
     }
     
-    /* 슬라이더 패딩 제거 */
+    /* 슬라이더 패딩 최적화 */
     .stSlider { padding: 0 !important; }
     </style>
     """, unsafe_allow_html=True)
@@ -82,12 +84,12 @@ if st.button("🔊 원어민 표준 발음 듣기"):
 st.divider()
 st.subheader(f"🎯 연습: {target_word.upper()}")
 
-# --- [4] 핵심 수정: 버튼 수직/수평 정렬 강제 고정 ---
+# --- [4] 버튼 배치 (50:50 고정 비율) ---
 c1, c2 = st.columns(2)
 with c1:
     audio = mic_recorder(start_prompt="녹음 시작", stop_prompt="완료", key=f"rec_{st.session_state.reset_key}")
 with c2:
-    if st.button("리셋"):
+    if st.button("🔄 리셋"):
         st.session_state.reset_key += 1
         st.session_state.last_audio_id, st.session_state.analysis_done, st.session_state.final_y_l = None, False, None
         st.rerun()
@@ -117,8 +119,6 @@ if audio:
         st.session_state.final_y_l = y_full[int(trim_range[0]*sr_f):int(trim_range[1]*sr_f)]
         st.session_state.current_sr = sr_f
 
-# --- [6] 분석 결과 출력 ---
+# --- [6] 분석 결과 출력 (이전과 동일) ---
 if st.session_state.get('analysis_done') and st.session_state.final_y_l is not None:
-    y_l, sr = st.session_state.final_y_l, st.session_state.current_sr
-    # (결과 시각화 로직 - 이전과 동일)
-    st.success("분석이 완료되었습니다.")
+    st.success("분석이 완료되었습니다. 결과 그래프를 확인하세요.")
