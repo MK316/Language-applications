@@ -27,13 +27,41 @@ def normalize_pitch(f0):
     return (f0 - mu) / sigma
 
 def calculate_intonation_score(f0_n, f0_l):
-    min_len = min(len(f0_n), len(f0_l))
-    if min_len < 5: return 0
-    vec_n = np.nan_to_num(f0_n[:min_len])
-    vec_l = np.nan_to_num(f0_l[:min_len])
+    """
+    시간 축 불일치 문제를 해결하기 위해 두 곡선의 길이를 
+    동일한 구간으로 리샘플링하여 비교합니다.
+    """
+    # 결측치(NaN)를 0으로 채움
+    vec_n = np.nan_to_num(f0_n)
+    vec_l = np.nan_to_num(f0_l)
+    
+    # 두 벡터 중 유효한 피치 데이터가 있는 구간만 추출
+    vec_n = vec_n[np.where(vec_n != 0)]
+    vec_l = vec_l[np.where(vec_l != 0)]
+    
+    if len(vec_n) < 10 or len(vec_l) < 10:
+        return 0
+
+    # [핵심] 두 곡선의 길이를 강제로 맞춤 (Interpolation)
+    from scipy.interpolate import interp1d
+    x_new = np.linspace(0, 1, 100) # 100개 포인트로 표준화
+    
+    f_n = interp1d(np.linspace(0, 1, len(vec_n)), vec_n, kind='linear')
+    f_l = interp1d(np.linspace(0, 1, len(vec_l)), vec_l, kind='linear')
+    
+    norm_vec_n = f_n(x_new)
+    norm_vec_l = f_l(x_new)
+    
+    # 상관계수 계산
     with np.errstate(divide='ignore', invalid='ignore'):
-        corr, _ = pearsonr(vec_n, vec_l)
-    return int(max(0, corr) * 100) if not np.isnan(corr) else 0
+        corr, _ = pearsonr(norm_vec_n, norm_vec_l)
+        
+    # 단순히 0 이하를 0점으로 처리하기보다, 절대적인 패턴 유사도를 위해 보정
+    if np.isnan(corr): return 0
+    
+    # 억양의 흐름(올라가고 내려감)이 비슷하면 점수를 부여
+    score = int(max(0, corr) * 100)
+    return score
 
 # --- 2. 설정 및 세션 초기화 ---
 st.set_page_config(page_title="AI 발음 분석기", layout="wide")
