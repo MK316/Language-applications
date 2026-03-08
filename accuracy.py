@@ -163,10 +163,10 @@ if st.session_state.analysis_done:
                 * **+10% ~ +25%:** 이해 가능한 수준의 안정적인 발화 (Intelligible).
                 * **+25% 초과:** 과도한 휴지(Pause) 혹은 음소 연장으로 인한 유창성 저하.
                 
-                **2. 참고 문헌:**
+                **2. 참고 문헌 및 표준 지침:**
+                * **American Council on the Teaching of Foreign Languages (2012).** *ACTFL Proficiency Guidelines 2012*. (공식 유창성 평가 기준)
                 * **Munro, M. J., & Derwing, T. M. (1995).** Foreign accent, comprehensibility, and intelligibility: Evidence from L2 learners. *Language Learning*.
                 * **Derwing, T. M., & Munro, M. J. (2001).** What makes accent-free speakers? *Journal of Phonetics*.
-                * **ACTFL Proficiency Guidelines:** 유창성 단계별 발화 속도 및 시간적 지표 기준.
                 """)
 
         with tab3:
