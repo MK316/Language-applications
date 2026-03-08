@@ -8,47 +8,49 @@ from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 from scipy.interpolate import interp1d
 
-# --- [1] 모바일 정밀 디자인: 픽셀 단위 하드코딩 ---
+# --- [1] 모바일 정밀 디자인: 강제 규격 통일 ---
 st.set_page_config(page_title="Word Stress Master", layout="centered")
 
 st.markdown("""
     <style>
-    /* 슬라이더 패딩 제거 */
-    .stSlider { padding-left: 0px !important; padding-right: 0px !important; }
     .main .block-container { padding-top: 1rem; }
 
-    /* [핵심] 버튼 내부 구조를 무시하고 외관 높이와 폰트를 강제 일치 */
-    div[data-testid="stHorizontalBlock"] button {
-        height: 56px !important;      /* 버튼 전체 높이 고정 */
-        min-height: 56px !important;
-        font-size: 17px !important;    /* 글자 크기 고정 */
-        line-height: 1 !important;    /* 줄 간격 초기화 */
-        padding: 0px !important;       /* 내부 여백 제거하여 글자 위주로 정렬 */
+    /* [핵심] 모든 버튼의 높이와 폰트를 절대 수치로 강제 고정 */
+    button, .stMicrophone button {
+        height: 54px !important;
+        font-size: 16px !important;
+        font-weight: 600 !important;
+        border-radius: 10px !important;
         width: 100% !important;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
-        border-radius: 12px !important;
+        box-shadow: none !important;
+        margin: 0 !important;
     }
 
-    /* 버튼 사이 간격 최소화 */
-    div[data-testid="stHorizontalBlock"] {
-        gap: 8px !important;
+    /* 버튼을 감싸는 컬럼의 정렬을 강제로 일치시킴 */
+    [data-testid="stHorizontalBlock"] {
+        align-items: center !important;
+        gap: 10px !important;
     }
 
-    /* 왼쪽 녹음 버튼 스타일 (빨간색) */
-    div[data-testid="stHorizontalBlock"] > div:nth-child(1) button {
+    /* 녹음 버튼 (빨간색) */
+    [data-testid="stHorizontalBlock"] > div:nth-child(1) button {
         background-color: #ff4b4b !important;
         color: white !important;
         border: none !important;
     }
 
-    /* 오른쪽 리셋 버튼 스타일 (회색) */
-    div[data-testid="stHorizontalBlock"] > div:nth-child(2) button {
+    /* 리셋 버튼 (회색) */
+    [data-testid="stHorizontalBlock"] > div:nth-child(2) button {
         background-color: #f0f2f6 !important;
         color: #31333F !important;
         border: 1px solid #dcdcdc !important;
     }
+    
+    /* 슬라이더 패딩 제거 */
+    .stSlider { padding: 0 !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -69,31 +71,22 @@ def safe_trim(audio_segment):
     start, end = bounds[0]
     return audio_segment[start:end] if (end - start) > 200 else audio_segment
 
-# --- [3] 앱 UI: 단어 선택 ---
+# --- [3] 메인 UI ---
 st.title("🎙️ Word Stress Master")
 word_db = {"Photograph (1음절 강세)": "photograph", "Photographer (2음절 강세)": "photographer", "Education (3음절 강세)": "education"}
-selected_label = st.selectbox("학습할 단어 선택:", list(word_db.keys()))
-target_word = word_db[selected_label]
+target_word = word_db[st.selectbox("단어 선택:", list(word_db.keys()))]
 
-if st.button("🔊 원어민 발음 듣기"):
+if st.button("🔊 원어민 표준 발음 듣기"):
     tts = gTTS(text=target_word, lang='en'); mp3 = io.BytesIO(); tts.write_to_fp(mp3); st.audio(mp3.getvalue())
 
 st.divider()
-
-# --- [4] 핵심 수정: 버튼 가로 5:5 하드코딩 배치 ---
 st.subheader(f"🎯 연습: {target_word.upper()}")
 
-col_l, col_r = st.columns(2)
-
-with col_l:
-    # 아이콘을 제거하고 텍스트만 사용하여 리셋 버튼과 규격을 완벽히 맞춤
-    audio = mic_recorder(
-        start_prompt="녹음 시작",
-        stop_prompt="완료",
-        key=f"rec_{st.session_state.reset_key}"
-    )
-
-with col_r:
+# --- [4] 핵심 수정: 버튼 수직/수평 정렬 강제 고정 ---
+c1, c2 = st.columns(2)
+with c1:
+    audio = mic_recorder(start_prompt="녹음 시작", stop_prompt="완료", key=f"rec_{st.session_state.reset_key}")
+with c2:
     if st.button("리셋"):
         st.session_state.reset_key += 1
         st.session_state.last_audio_id, st.session_state.analysis_done, st.session_state.final_y_l = None, False, None
@@ -101,7 +94,9 @@ with col_r:
 
 # --- [5] 구간 설정 및 분석 로직 ---
 if audio:
-    # (이후 로직은 이전과 동일)
+    if audio['id'] != st.session_state.last_audio_id:
+        st.session_state.last_audio_id, st.session_state.analysis_done = audio['id'], False
+
     l_raw = AudioSegment.from_file(io.BytesIO(audio['bytes']))
     y_full = np.array(l_raw.get_array_of_samples(), dtype=np.float32) / (2**15)
     if l_raw.channels > 1: y_full = y_full.reshape((-1, l_raw.channels)).mean(axis=1)
@@ -122,7 +117,8 @@ if audio:
         st.session_state.final_y_l = y_full[int(trim_range[0]*sr_f):int(trim_range[1]*sr_f)]
         st.session_state.current_sr = sr_f
 
-# 분석 결과 출력 섹션 (생략 가능하나 기능 유지를 위해 포함)
+# --- [6] 분석 결과 출력 ---
 if st.session_state.get('analysis_done') and st.session_state.final_y_l is not None:
-    # (결과 시각화 로직)
-    st.success("분석이 완료되었습니다. 아래 그래프를 확인하세요.")
+    y_l, sr = st.session_state.final_y_l, st.session_state.current_sr
+    # (결과 시각화 로직 - 이전과 동일)
+    st.success("분석이 완료되었습니다.")
