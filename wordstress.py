@@ -51,9 +51,9 @@ st.title("🎙️ Word Stress Master")
 word_db = {"Photograph": "photograph", "Photographer": "photographer", "Education": "education"}
 target_word = word_db[st.selectbox("학습할 단어 선택:", list(word_db.keys()))]
 
-if st.button("🔊 원어민 표준 발음 듣기"):
-    tts = gTTS(text=target_word, lang='en')
-    mp3_buf = io.BytesIO(); tts.write_to_fp(mp3_buf); st.audio(mp3_buf.getvalue())
+# if st.button("🔊 원어민 표준 발음 듣기"):
+#     tts = gTTS(text=target_word, lang='en')
+#     mp3_buf = io.BytesIO(); tts.write_to_fp(mp3_buf); st.audio(mp3_buf.getvalue())
 
 st.divider()
 
