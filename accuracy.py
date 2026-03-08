@@ -11,7 +11,9 @@ from difflib import SequenceMatcher
 
 # --- 유틸리티 함수 ---
 def get_speech_bounds(audio_segment, silence_thresh=-40, min_silence_len=100, buffer_ms=100):
-    nonsilent_intervals = detect_nonsilent(audio_segment, min_silence_len=min_silence_len, silence_thresh=silence_thresh)
+    nonsilent_intervals = detect_nonsilent(audio_segment, 
+                                           min_silence_len=min_silence_len, 
+                                           silence_thresh=silence_thresh)
     if not nonsilent_intervals: return 0, len(audio_segment)
     start_trim = max(0, nonsilent_intervals[0][0] - buffer_ms)
     end_trim = min(len(audio_segment), nonsilent_intervals[-1][1] + 50)
@@ -94,6 +96,7 @@ if st.session_state.analysis_done:
         audio_stream = io.BytesIO(st.session_state.audio_bytes)
         full_audio = AudioSegment.from_file(audio_stream)
         
+        # 1. 학습자 오디오 크롭 및 저장
         start_ms, end_ms = st.session_state.start_time * 1000, st.session_state.end_time * 1000
         cropped_audio = full_audio[start_ms:end_ms]
         l_s, l_e = get_speech_bounds(cropped_audio, buffer_ms=100)
@@ -101,6 +104,7 @@ if st.session_state.analysis_done:
         final_learner.export("temp_learner.wav", format="wav")
         full_audio.export("temp_stt.wav", format="wav")
         
+        # 2. 원어민 오디오 생성 및 저장
         tts = gTTS(text=target_text, lang='en')
         tts.save("temp_native.mp3")
         native_raw = AudioSegment.from_file("temp_native.mp3", format="mp3")
@@ -113,6 +117,17 @@ if st.session_state.analysis_done:
 
         learner_speech_dur = len(final_learner) / 1000.0
         native_speech_dur = len(final_native) / 1000.0
+
+        # --- [추가] 탭 상단 공통 오디오 플레이어 ---
+        st.divider()
+        audio_col1, audio_col2 = st.columns(2)
+        with audio_col1:
+            st.write("🎙️ **나의 발음 (조정된 구간)**")
+            st.audio("temp_learner.wav")
+        with audio_col2:
+            st.write("🔊 **원어민 발음**")
+            st.audio("temp_native.wav")
+        st.write("")
 
         tab1, tab2, tab3, tab4 = st.tabs(["🎯 AI 점수", "⏱️ 유창성 분석", "🔊 음파 대조", "📈 피치 분석"])
 
@@ -133,7 +148,7 @@ if st.session_state.analysis_done:
                 except: st.error("인식 실패")
 
         with tab2:
-            st.subheader("순수 발화 구간 및 속도 편차")
+            st.subheader("순수 발화 구간 분석 (Detected Pure Speech)")
             fig_dur, (ax_n, ax_l) = plt.subplots(2, 1, figsize=(12, 5))
             librosa.display.waveshow(y_native, sr=sr_l, ax=ax_n, color='lightgray', alpha=0.5)
             ax_n.axvline(x=0, color='red', linestyle='--'); ax_n.axvline(x=native_speech_dur, color='red', linestyle='--')
@@ -146,7 +161,6 @@ if st.session_state.analysis_done:
             diff_ratio = ((learner_speech_dur / native_speech_dur) - 1) * 100
             diff_text = f"{'+' if diff_ratio >= 0 else ''}{int(diff_ratio)}%"
             
-            # [해석 가이드 적용]
             if abs(diff_ratio) <= 10:
                 st.success(f"✅ **Optimal: 원어민과 거의 유사한 속도입니다. ({diff_text})**")
             elif 10 < diff_ratio <= 25:
@@ -164,7 +178,7 @@ if st.session_state.analysis_done:
                 * **+25% 초과:** 과도한 휴지(Pause) 혹은 음소 연장으로 인한 유창성 저하.
                 
                 **2. 참고 문헌 및 표준 지침:**
-                * **American Council on the Teaching of Foreign Languages (2012).** *ACTFL Proficiency Guidelines 2012*. (공식 유창성 평가 기준)
+                * **American Council on the Teaching of Foreign Languages (2012).** *ACTFL Proficiency Guidelines 2012*.
                 * **Munro, M. J., & Derwing, T. M. (1995).** Foreign accent, comprehensibility, and intelligibility: Evidence from L2 learners. *Language Learning*.
                 * **Derwing, T. M., & Munro, M. J. (2001).** What makes accent-free speakers? *Journal of Phonetics*.
                 """)
