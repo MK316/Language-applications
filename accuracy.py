@@ -10,6 +10,7 @@ from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 from difflib import SequenceMatcher
 from scipy.stats import pearsonr
+import re # 정규표현식 추가
 
 # --- 1. 유틸리티 함수 ---
 def get_speech_bounds(audio_segment, silence_thresh=-40, min_silence_len=100, buffer_ms=100):
@@ -118,30 +119,42 @@ if st.session_state.analysis_done:
                 audio_data = recognizer_obj.record(source)
                 try:
                     text_res = recognizer_obj.recognize_google(audio_data, language='en-US')
-                    sim_val = SequenceMatcher(None, target_text.lower(), text_res.lower()).ratio()
-                    st.metric("발음 정확도", f"{int(sim_val*100)}점")
-                    st.success(f"인식 결과: {text_res}")
+                    
+                    # [핵심 추가] 전처리 로직: 대소문자 통합 및 문장부호 제거
+                    def clean_string(s):
+                        return re.sub(r'[^\w\s]', '', s).lower().strip()
+                    
+                    clean_target = clean_string(target_text)
+                    clean_result = clean_string(text_res)
+                    
+                    # 전처리된 텍스트로 유사도 측정
+                    sim_val = SequenceMatcher(None, clean_target, clean_result).ratio()
+                    
+                    # 98점 이상이면 사실상 일치하므로 100점으로 보정
+                    final_acc_score = 100 if sim_val > 0.98 else int(sim_val * 100)
+                    
+                    c1, c2 = st.columns([1, 2])
+                    with c1: 
+                        st.markdown(f"""<div style="background-color: #e8f4f8; border-left: 5px solid #1f77b4; padding: 20px; border-radius: 8px; height: 120px;">
+                                    <b>정확도 점수</b><h1 style="color: #1f77b4; margin:0;">{final_acc_score}점</h1></div>""", unsafe_allow_html=True)
+                    with c2: 
+                        st.markdown(f"""<div style="background-color: #eafaf1; border-left: 5px solid #2ecc71; padding: 20px; border-radius: 8px; height: 120px;">
+                                    <b>인식 결과</b><p style="font-size: 1.2rem; color: #27ae60; margin:0;">{text_res}</p></div>""", unsafe_allow_html=True)
                 except: st.error("인식 실패")
 
         with tab2:
             fig_dur, (ax_l, ax_n) = plt.subplots(2, 1, figsize=(12, 5))
             librosa.display.waveshow(y_l, sr=sr_curr, ax=ax_l, color='skyblue')
             librosa.display.waveshow(y_n, sr=sr_curr, ax=ax_n, color='lightgray')
-            ax_l.set_title(f"Learner ({l_dur:.2f}s)"); ax_n.set_title(f"Native ({n_dur:.2f}s)")
             plt.tight_layout(); st.pyplot(fig_dur)
             diff = ((l_dur / n_dur) - 1) * 100
             st.info(f"💡 발화 속도 편차: **{'+' if diff>=0 else ''}{int(diff)}%**")
 
-        # [복구 완료] 탭 3: 음파 대조
         with tab3:
-            st.subheader("음파 대조 분석 (Waveform Comparison)")
             fig_w, (axw1, axw2) = plt.subplots(2, 1, figsize=(12, 6))
             librosa.display.waveshow(y_l, sr=sr_curr, ax=axw1, color='skyblue')
-            axw1.set_title("My Waveform")
             librosa.display.waveshow(y_n, sr=sr_curr, ax=axw2, color='lightgray')
-            axw2.set_title("Native Waveform")
             plt.tight_layout(); st.pyplot(fig_w)
-            st.caption("※ 위아래 음파의 마디와 강도를 비교하여 강세(Stress) 위치가 일치하는지 확인해 보세요.")
 
         with tab4:
             st.subheader("억양 멜로디 분석 (Pitch Contour)")
@@ -154,7 +167,6 @@ if st.session_state.analysis_done:
             fig_p, (ax_l1, ax_n1) = plt.subplots(1, 2, figsize=(15, 4), sharey=True)
             ax_l1.plot(t_l, f0_l_f, color='#1f77b4', ls=':', marker='o', markersize=2)
             ax_n1.plot(t_n, f0_n_f, color='gray', ls=':', marker='o', markersize=2)
-            ax_l1.set_title("Your Pitch"); ax_n1.set_title("Native Pitch")
             st.pyplot(fig_p)
 
             st.write("---")
