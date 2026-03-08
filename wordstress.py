@@ -17,28 +17,30 @@ st.markdown("""
     .stSlider { padding-left: 0px; padding-right: 0px; }
     .main .block-container { padding-top: 1rem; }
     
-    /* 리셋 및 녹음 버튼 스타일 통일 */
-    div.stButton > button, div[data-testid="stVerticalBlock"] > div button {
+    /* [핵심] 버튼 크기 및 배치 통일 CSS */
+    div[data-testid="stHorizontalBlock"] div[data-testid="stVerticalBlock"] > div button {
         width: 100% !important;
-        height: 3.5em !important;
+        height: 3.5em !important; /* 높이 고정 */
         font-weight: bold !important;
-        font-size: 16px !important;
-        border-radius: 12px !important;
-        margin-bottom: 5px !important;
+        font-size: 15px !important;
+        border-radius: 10px !important;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     }
     
-    /* 리셋 버튼 색상 (회색) */
-    div.stButton > button:contains("리셋") {
-        background-color: #f0f2f6 !important;
-        color: #31333F !important;
-        border: 1px solid #dcdcdc !important;
-    }
-    
-    /* 녹음 버튼 색상 (빨간색 강조) */
-    div[data-testid="stVerticalBlock"] > div button:contains("녹음") {
+    /* 녹음 버튼 강조 (왼쪽) */
+    div[data-testid="stHorizontalBlock"] > div:nth-child(1) button {
         background-color: #ff4b4b !important;
         color: white !important;
         border: none !important;
+    }
+    
+    /* 리셋 버튼 (오른쪽) */
+    div[data-testid="stHorizontalBlock"] > div:nth-child(2) button {
+        background-color: #f0f2f6 !important;
+        color: #31333F !important;
+        border: 1px solid #dcdcdc !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -61,7 +63,6 @@ def safe_trim(audio_segment):
 
 def detect_syllable_stress(y, sr):
     env = get_rms_envelope(y)
-    # 진폭 가중치를 높여 시각적 피크 일치
     weighted_env = (env / (np.max(env) + 1e-6)) * 0.8 + (env / (np.sum(env) + 1e-6)) * 0.2
     return np.argmax(weighted_env), env
 
@@ -97,16 +98,24 @@ if st.button("🔊 원어민 표준 발음 듣기"):
 
 st.divider()
 
-# --- [4] 리셋 및 녹음 컨트롤 (세로 배치) ---
+# --- [4] 핵심 수정: 버튼 가로 5:5 배치 (녹음 왼쪽, 리셋 오른쪽) ---
 st.subheader(f"🎯 연습: {target_word.upper()}")
 
-if st.button("🔄 리셋 (다시 하기)"):
-    st.session_state.last_audio_id = None
-    st.session_state.analysis_done = False
-    st.session_state.final_y_l = None
-    st.rerun()
+col_l, col_r = st.columns(2)
 
-audio = mic_recorder(start_prompt="🎤 녹음 시작", stop_prompt="🛑 녹음 완료", key="word_recorder")
+with col_l:
+    audio = mic_recorder(
+        start_prompt="🎤 녹음 시작",
+        stop_prompt="🛑 완료",
+        key="word_recorder"
+    )
+
+with col_r:
+    if st.button("🔄 리셋"):
+        st.session_state.last_audio_id = None
+        st.session_state.analysis_done = False
+        st.session_state.final_y_l = None
+        st.rerun()
 
 # --- [5] 구간 설정 및 분석 로직 ---
 if audio:
@@ -115,7 +124,6 @@ if audio:
         st.session_state.analysis_done = False
         st.session_state.final_y_l = None
 
-    # 오디오 데이터 처리
     l_raw = AudioSegment.from_file(io.BytesIO(audio['bytes']))
     y_full = np.array(l_raw.get_array_of_samples(), dtype=np.float32) / (2**15)
     if l_raw.channels > 1: y_full = y_full.reshape((-1, l_raw.channels)).mean(axis=1)
@@ -125,11 +133,10 @@ if audio:
     auto_bounds = detect_nonsilent(l_raw, min_silence_len=100, silence_thresh=-45)
     as_ms, ae_ms = auto_bounds[0] if auto_bounds else (0, len(l_raw))
     
-    trim_range = st.slider("단어의 시작과 끝을 맞추세요:", 
+    trim_range = st.slider("단어 구간 조절 (초):", 
                            0.0, float(len(y_full)/sr_f), 
                            (float(as_ms/1000), float(ae_ms/1000)), step=0.01)
 
-    # 파형 프리뷰 (슬라이더와 수직 동기화)
     fig_p = plt.figure(figsize=(10, 2.2))
     axp = fig_p.add_axes([0, 0.2, 1, 0.8])
     librosa.display.waveshow(y_full, sr=sr_f, ax=axp, color='skyblue', alpha=0.5)
@@ -137,16 +144,15 @@ if audio:
     axp.axvline(x=trim_range[1], color='red', lw=2, ls='--')
     axp.set_xlim(0, len(y_full)/sr_f); axp.set_yticks([]); st.pyplot(fig_p)
 
-    # 구간 확인 미리듣기
     trimmed_audio = l_raw[int(trim_range[0]*1000):int(trim_range[1]*1000)]
     st.audio(trimmed_audio.export(io.BytesIO(), format="wav").getvalue())
     
-    if st.button("📊 정밀 에너지 분석 시작", type="primary"):
+    if st.button("📊 정밀 분석 실행", type="primary"):
         st.session_state.analysis_done = True
         st.session_state.final_y_l = y_full[int(trim_range[0]*sr_f):int(trim_range[1]*sr_f)]
         st.session_state.current_sr = sr_f
 
-# --- [6] 결과 분석 출력 ---
+# --- [6] 분석 결과 출력 ---
 if st.session_state.get('analysis_done') and st.session_state.final_y_l is not None:
     y_l, sr = st.session_state.final_y_l, st.session_state.current_sr
     try:
@@ -164,7 +170,7 @@ if st.session_state.get('analysis_done') and st.session_state.final_y_l is not N
 
             st.divider()
             c1, c2 = st.columns(2)
-            c1.metric("종합 발음 점수", f"{score}점")
+            c1.metric("종합 점수", f"{score}점")
             c2.metric("강세 구간 비중", f"{dur_l:.1f}%", f"{dur_l-dur_n:+.1f}% vs 원어민")
 
             fig_res, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6))
