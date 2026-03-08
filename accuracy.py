@@ -3,7 +3,7 @@ from streamlit_mic_recorder import mic_recorder
 import speech_recognition as sr
 import io, os, librosa, librosa.display
 import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker  # 눈금 제어를 위해 추가
+import matplotlib.ticker as ticker
 import numpy as np
 from gtts import gTTS
 from pydub import AudioSegment
@@ -29,7 +29,6 @@ st.set_page_config(page_title="AI 발음 분석기", layout="wide")
 if 'analysis_done' not in st.session_state:
     st.session_state.analysis_done = False
 
-# [샘플 문장 리스트 동일]
 sample_sentences = {
     "Level 01: (인사/기초)": "I am on my way.",
     "Level 02: (일상/기초)": "Nice room you have.",
@@ -75,7 +74,7 @@ if audio:
     duration_sec = len(full_audio) / 1000.0
     y_full, sr_f = librosa.load("temp_preview.wav", sr=22050)
     
-    st.subheader("✂️ 발화 구간 및 줌 설정 (High-Precision)")
+    st.subheader("✂️ 발화 구간 및 줌 설정")
     
     c_zoom, c_input = st.columns([1, 1])
     with c_zoom:
@@ -87,22 +86,13 @@ if audio:
         start_val = in_col1.number_input("시작 시간 (sec):", 0.0, duration_sec, float(v_start_init/1000), step=0.01, format="%.2f")
         end_val = in_col2.number_input("종료 시간 (sec):", 0.0, duration_sec, float(v_end_init/1000), step=0.01, format="%.2f")
 
-    # [수정] 고해상도 눈금이 적용된 그래프
-    fig_p, ax = plt.subplots(figsize=(12, 4))
+    fig_p, ax = plt.subplots(figsize=(12, 3))
     librosa.display.waveshow(y_full, sr=sr_f, ax=ax, color='skyblue', alpha=0.6)
-    
-    # 0.1초 단위 Major Tick, 0.05초 단위 Minor Tick 설정
-    ax.xaxis.set_major_locator(ticker.MultipleLocator(0.1))
-    ax.xaxis.set_minor_locator(ticker.MultipleLocator(0.05))
-    ax.grid(which='both', axis='x', color='gray', linestyle='--', alpha=0.3) # 그리드 추가
-    
-    ax.axvline(x=start_val, color='red', linestyle='-', linewidth=2, label='Start Trim')
-    ax.axvline(x=end_val, color='red', linestyle='-', linewidth=2, label='End Trim')
-    ax.set_xlim(zoom_range) 
-    ax.set_xlabel("Time (seconds) - 0.1s Grids")
-    ax.legend(loc='upper right')
+    ax.xaxis.set_major_locator(ticker.MultipleLocator(0.1)) # 0.1초 단위 눈금
+    ax.grid(axis='x', linestyle='--', alpha=0.3)
+    ax.axvline(x=start_val, color='red', linewidth=2); ax.axvline(x=end_val, color='red', linewidth=2)
+    ax.set_xlim(zoom_range)
     st.pyplot(fig_p)
-    
     st.audio(audio_bytes)
         
     if st.button("📊 Step 3: 설정된 구간으로 분석하기", use_container_width=True):
@@ -140,7 +130,6 @@ if st.session_state.analysis_done:
 
         tab1, tab2, tab3, tab4 = st.tabs(["🎯 AI 점수", "⏱️ 유창성 분석", "🔊 음파 대조", "📈 피치 분석"])
 
-        # [이후 분석 탭 로직 동일하여 생략]
         with tab1:
             r = sr.Recognizer()
             with sr.AudioFile("temp_stt.wav") as source:
@@ -162,6 +151,8 @@ if st.session_state.analysis_done:
             plt.tight_layout(); st.pyplot(fig_dur)
             diff = ((l_dur / n_dur) - 1) * 100
             st.info(f"💡 원어민 대비 발화 속도 편차: **{'+' if diff>=0 else ''}{int(diff)}%**")
+            with st.expander("📚 참고문헌"):
+                st.markdown("* Munro & Derwing (1995), ACTFL Proficiency Guidelines 2012.")
 
         with tab3:
             fig_w, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 4))
@@ -170,14 +161,17 @@ if st.session_state.analysis_done:
             plt.tight_layout(); st.pyplot(fig_w)
 
         with tab4:
+            st.subheader("억양 멜로디 분석 (Pitch Contour)")
+            # [핵심 수정] 피치 복구를 위해 임계값 완화 (p_l: 0.25 -> 0.15, p_n: 0.05 -> 0.01)
             f0_l, v_l, p_l = librosa.pyin(y_learner, fmin=75, fmax=400, hop_length=128)
             f0_n, v_n, p_n = librosa.pyin(y_native, fmin=60, fmax=400, hop_length=128)
-            f0_l_f = np.where(v_l & (p_l > 0.25) & (f0_l > 80), f0_l, np.nan)
-            f0_n_f = np.where(v_n & (p_n > 0.05), f0_n, np.nan)
+            f0_l_f = np.where(v_l & (p_l > 0.15) & (f0_l > 80), f0_l, np.nan)
+            f0_n_f = np.where(v_n & (p_n > 0.01), f0_n, np.nan)
             
             fig_p, (ax_n1, ax_l1) = plt.subplots(1, 2, figsize=(15, 4), sharey=True)
             ax_n1.plot(librosa.times_like(f0_n, hop_length=128), f0_n_f, color='lightgray', linewidth=3)
             ax_l1.plot(librosa.times_like(f0_l, hop_length=128), f0_l_f, color='#1f77b4', linewidth=2.5)
+            ax_n1.set_title("Native Speaker"); ax_l1.set_title("Your Pitch")
             st.pyplot(fig_p)
             
             if st.checkbox("📈 패턴 대조(Normalized)"):
