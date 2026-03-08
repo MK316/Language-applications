@@ -8,7 +8,7 @@ from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 from scipy.interpolate import interp1d
 
-# --- [1] 레이아웃 및 CSS ---
+# --- [1] 모바일 레이아웃 및 정밀 디자인 설정 ---
 st.set_page_config(page_title="Word Stress Master", layout="centered")
 
 st.markdown("""
@@ -16,27 +16,32 @@ st.markdown("""
     .stSlider { padding-left: 0px; padding-right: 0px; }
     .main .block-container { padding-top: 1rem; }
     
-    /* 버튼 5:5 가로 배치 및 크기 통일 */
-    div[data-testid="stHorizontalBlock"] div[data-testid="stVerticalBlock"] > div button {
-        width: 100% !important;
+    /* [핵심] 모든 버튼의 폰트와 크기를 강제 통일 */
+    button {
         height: 3.5em !important;
+        font-size: 16px !important; /* 글자 크기 고정 */
         font-weight: bold !important;
-        font-size: 15px !important;
         border-radius: 10px !important;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        gap: 8px !important; /* 아이콘과 글자 사이 간격 */
+    }
+
+    /* 가로 배치를 위한 컬럼 내부 버튼 너비 강제화 */
+    [data-testid="stHorizontalBlock"] [data-testid="stVerticalBlock"] button {
+        width: 100% !important;
     }
     
-    /* 녹음 버튼 (왼쪽) */
-    div[data-testid="stHorizontalBlock"] > div:nth-child(1) button {
+    /* 왼쪽 녹음 버튼 (빨간색) */
+    [data-testid="stHorizontalBlock"] > div:nth-child(1) button {
         background-color: #ff4b4b !important;
         color: white !important;
         border: none !important;
     }
     
-    /* 리셋 버튼 (오른쪽) */
-    div[data-testid="stHorizontalBlock"] > div:nth-child(2) button {
+    /* 오른쪽 리셋 버튼 (회색) */
+    [data-testid="stHorizontalBlock"] > div:nth-child(2) button {
         background-color: #f0f2f6 !important;
         color: #31333F !important;
         border: 1px solid #dcdcdc !important;
@@ -44,7 +49,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 세션 상태 초기화 (리셋용 key 추가)
+# 세션 상태 초기화 (리셋 키 포함)
 if 'reset_key' not in st.session_state: st.session_state.reset_key = 0
 if 'last_audio_id' not in st.session_state: st.session_state.last_audio_id = None
 if 'analysis_done' not in st.session_state: st.session_state.analysis_done = False
@@ -90,7 +95,7 @@ word_db = {
 selected_label = st.selectbox("학습할 단어 선택:", list(word_db.keys()))
 target_word = word_db[selected_label]
 
-if st.button("🔊 원어민 표준 발음 듣기"):
+if st.button("🔊 원어민 발음 듣기"):
     tts = gTTS(text=target_word, lang='en')
     mp3_buf = io.BytesIO()
     tts.write_to_fp(mp3_buf)
@@ -98,13 +103,13 @@ if st.button("🔊 원어민 표준 발음 듣기"):
 
 st.divider()
 
-# --- [4] 리셋 및 녹음 컨트롤 (완전 리셋 로직 적용) ---
+# --- [4] 리셋 및 녹음 컨트롤 (버튼 디자인 완전 일치) ---
 st.subheader(f"🎯 연습: {target_word.upper()}")
 
 col_l, col_r = st.columns(2)
 
 with col_l:
-    # reset_key를 key에 포함시켜 리셋 시 컴포넌트를 새로 생성함
+    # 텍스트와 아이콘 구성을 단순화하여 리셋 버튼과 규격 맞춤
     audio = mic_recorder(
         start_prompt="🎤 녹음 시작",
         stop_prompt="🛑 완료",
@@ -113,9 +118,7 @@ with col_l:
 
 with col_r:
     if st.button("🔄 리셋"):
-        # 1. 컴포넌트 ID 변경 (녹음 파일 강제 삭제)
         st.session_state.reset_key += 1
-        # 2. 분석 데이터 초기화
         st.session_state.last_audio_id = None
         st.session_state.analysis_done = False
         st.session_state.final_y_l = None
@@ -156,7 +159,7 @@ if audio:
         st.session_state.final_y_l = y_full[int(trim_range[0]*sr_f):int(trim_range[1]*sr_f)]
         st.session_state.current_sr = sr_f
 
-# --- [6] 분석 결과 출력 ---
+# --- [6] 결과 분석 출력 ---
 if st.session_state.get('analysis_done') and st.session_state.final_y_l is not None:
     y_l, sr = st.session_state.final_y_l, st.session_state.current_sr
     try:
