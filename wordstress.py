@@ -1,6 +1,5 @@
 import streamlit as st
 from streamlit_mic_recorder import mic_recorder
-import speech_recognition as speech_rec
 import io, os, librosa, librosa.display
 import matplotlib.pyplot as plt
 import numpy as np
@@ -23,22 +22,19 @@ def calculate_stress_score(y_n, y_l, sr):
     hop_length = 512
     rms_n = librosa.feature.rms(y=y_n, hop_length=hop_length)[0]
     rms_l = librosa.feature.rms(y=y_l, hop_length=hop_length)[0]
-    
     if len(rms_n) < 2 or len(rms_l) < 2: return 0
-    
     f_n = interp1d(np.linspace(0, 1, len(rms_n)), rms_n, fill_value="extrapolate")
     f_l = interp1d(np.linspace(0, 1, len(rms_l)), rms_l, fill_value="extrapolate")
-    
     new_x = np.linspace(0, 1, 100)
-    norm_rms_n = f_n(new_x)
-    norm_rms_l = f_l(new_x)
-    
-    correlation = np.corrcoef(norm_rms_n, norm_rms_l)[0, 1]
+    correlation = np.corrcoef(f_n(new_x), f_l(new_x))[0, 1]
     return int(max(0, correlation) * 100) if not np.isnan(correlation) else 0
 
-# --- 2. 앱 설정 및 데이터 ---
+# --- 2. 앱 설정 및 세션 초기화 ---
 st.set_page_config(page_title="Word Stress Master", layout="wide")
 st.title("🎙️ Word Stress & Amplitude Master")
+
+if 'analysis_ready' not in st.session_state: st.session_state.analysis_ready = False
+if 'prev_audio_id' not in st.session_state: st.session_state.prev_audio_id = None
 
 word_db = {
     "Photograph (1음절 강세)": "photograph",
@@ -53,82 +49,101 @@ with st.sidebar:
     st.header("📍 Step 1: 단어 선택")
     selected_label = st.selectbox("학습할 단어를 선택하세요:", list(word_db.keys()))
     target_word = word_db[selected_label]
-    
-    if st.button("🔊 원어민 발음 듣기"):
+    if st.button("🔊 원어민 표준 발음 듣기"):
         tts = gTTS(text=target_word, lang='en')
-        mp3_fp = io.BytesIO()
-        tts.write_to_fp(mp3_fp)
+        mp3_fp = io.BytesIO(); tts.write_to_fp(mp3_fp); mp3_fp.seek(0)
         st.audio(mp3_fp)
 
-# --- 4. Step 2: 나의 발음 녹음 ---
+# --- 4. Step 2: 녹음 및 구간 설정 ---
 st.subheader(f"🎯 도전 단어: **{target_word.upper()}**")
-col_rec, _ = st.columns([1, 2])
-with col_rec:
-    audio = mic_recorder(start_prompt="🎤 녹음 시작", stop_prompt="🛑 녹음 완료", key="word_recorder")
+audio = mic_recorder(start_prompt="🎤 녹음 시작", stop_prompt="🛑 녹음 완료", key="word_recorder")
 
-# --- 5. Step 3: 분석 (메모리 직접 참조 방식) ---
 if audio:
-    audio_bytes = audio['bytes']
-    
-    with st.spinner("강세 패턴 분석 중..."):
-        try:
-            # [해결] 파일 대신 BytesIO 사용
-            audio_stream = io.BytesIO(audio_bytes)
-            l_seg = AudioSegment.from_file(audio_stream)
-            
-            # 원어민 TTS 생성 (메모리 상에서 처리)
-            tts = gTTS(text=target_word, lang='en')
-            n_mp3_fp = io.BytesIO()
-            tts.write_to_fp(n_mp3_fp)
-            n_mp3_fp.seek(0)
-            n_seg = AudioSegment.from_file(n_mp3_fp)
-            
-            # 무음 제거 및 구간 추출
-            l_start, l_end = get_speech_bounds(l_seg)
-            n_start, n_end = get_speech_bounds(n_seg)
-            
-            final_l_seg = l_seg[l_start:l_end]
-            final_n_seg = n_seg[n_start:n_end]
-            
-            # librosa 로드를 위해 임시 메모리 버퍼 활용
-            l_buffer = io.BytesIO()
-            final_l_seg.export(l_buffer, format="wav")
-            l_buffer.seek(0)
-            y_l, sr = librosa.load(l_buffer, sr=22050)
-            
-            n_buffer = io.BytesIO()
-            final_n_seg.export(n_buffer, format="wav")
-            n_buffer.seek(0)
-            y_n, _ = librosa.load(n_buffer, sr=sr)
-            
-            y_l = normalize_audio(y_l)
-            y_n = normalize_audio(y_n)
+    # 새로운 녹음이 들어오면 분석 상태 초기화
+    if audio['id'] != st.session_state.prev_audio_id:
+        st.session_state.analysis_ready = False
+        st.session_state.prev_audio_id = audio['id']
 
-            st.divider()
-            st.success("✅ 분석 완료!")
+    audio_bytes = audio['bytes']
+    l_raw_seg = AudioSegment.from_file(io.BytesIO(audio_bytes))
+    full_duration = len(l_raw_seg) / 1000.0
+
+    st.divider()
+    st.markdown("#### ✂️ Step 3: 분석 구간 설정 및 확인")
+    
+    # AI가 추천하는 기본 무음 제거 구간 계산
+    auto_s, auto_e = get_speech_bounds(l_raw_seg)
+    
+    # 슬라이더 생성
+    trim_range = st.slider("분석할 음성 구간을 선택하세요 (초):", 
+                           0.0, full_duration, 
+                           (float(auto_s/1000), float(auto_e/1000)), step=0.01)
+    
+    # 선택된 구간 미리 듣기 및 시각화
+    start_ms, end_ms = int(trim_range[0] * 1000), int(trim_range[1] * 1000)
+    trimmed_audio = l_raw_seg[start_ms:end_ms]
+    
+    col_play, col_btn = st.columns([2, 1])
+    with col_play:
+        st.write("🔈 선택된 구간 미리 듣기:")
+        playback_buffer = io.BytesIO()
+        trimmed_audio.export(playback_buffer, format="wav")
+        st.audio(playback_buffer)
+    
+    with col_btn:
+        st.write(" ") # 레이아웃 맞춤용
+        if st.button("📊 이 구간으로 상세 분석 시작", use_container_width=True):
+            st.session_state.analysis_ready = True
+            st.session_state.trimmed_wav = playback_buffer.getvalue()
+
+# --- 5. Step 4: 실제 음향 분석 수행 ---
+if st.session_state.get('analysis_ready'):
+    with st.spinner("🎯 강세 패턴 및 진폭 분석 중..."):
+        try:
+            # 1. 학습자 오디오 로드 (조정된 구간)
+            y_l, sr = librosa.load(io.BytesIO(st.session_state.trimmed_wav), sr=22050)
             
-            tab_wave, tab_analysis = st.tabs(["📊 파형 대조 분석", "📝 학습 성찰 기록"])
+            # 2. 원어민 TTS 생성 및 구간 추출
+            tts = gTTS(text=target_word, lang='en')
+            n_fp = io.BytesIO(); tts.write_to_fp(n_fp); n_fp.seek(0)
+            n_seg_full = AudioSegment.from_file(n_fp)
+            ns, ne = get_speech_bounds(n_seg_full)
+            final_n_seg = n_seg_full[ns:ne]
             
-            with tab_wave:
+            n_buf = io.BytesIO(); final_n_seg.export(n_buf, format="wav"); n_buf.seek(0)
+            y_n, _ = librosa.load(n_buf, sr=sr)
+            
+            # 3. 정규화
+            y_l = normalize_audio(y_l); y_n = normalize_audio(y_n)
+
+            st.success("✅ 분석이 완료되었습니다. 아래 탭에서 상세 데이터를 확인하세요.")
+            
+            tab1, tab2 = st.tabs(["📊 파형 및 강세 대조", "✍️ 성찰 노트"])
+            
+            with tab1:
                 fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6))
                 librosa.display.waveshow(y_l, sr=sr, ax=ax1, color='#1f77b4', alpha=0.7)
                 librosa.display.waveshow(y_n, sr=sr, ax=ax2, color='#A9A9A9', alpha=0.6)
                 
-                # 강세 Peak (최대 진폭 지점) 시각화
+                # 강세 피크 표시
                 if len(y_l) > 0 and len(y_n) > 0:
-                    ax1.axvline(x=librosa.samples_to_time(np.argmax(np.abs(y_l)), sr=sr), color='red', linestyle='--')
-                    ax2.axvline(x=librosa.samples_to_time(np.argmax(np.abs(y_n)), sr=sr), color='red', linestyle='--')
+                    ax1.axvline(x=librosa.samples_to_time(np.argmax(np.abs(y_l)), sr=sr), color='red', lw=2, ls='--')
+                    ax2.axvline(x=librosa.samples_to_time(np.argmax(np.abs(y_n)), sr=sr), color='red', lw=2, ls='--')
                 
-                ax1.set_title("My Stress Pattern"); ax2.set_title("Native Stress Pattern")
-                plt.tight_layout()
-                st.pyplot(fig)
+                ax1.set_title("My Adjusted Voice Pattern"); ax2.set_title("Native Standard Pattern")
+                plt.tight_layout(); st.pyplot(fig)
                 
                 c1, c2, c3 = st.columns(3)
-                with c1: st.metric("길이 편차", f"{len(y_l)/sr:.2f}s", delta=f"{len(y_l)/sr - len(y_n)/sr:.2f}s")
+                with c1: st.metric("구간 길이", f"{len(y_l)/sr:.2f}s")
                 with c2: st.metric("강세 일치도", f"{calculate_stress_score(y_n, y_l, sr)}점")
                 with c3:
-                    guide = selected_label.split("(")[1].replace(")", "") if "(" in selected_label else "강세를 확인하세요."
-                    st.info(f"💡 **팁:** {guide}")
+                    tip = selected_label.split("(")[1].replace(")", "") if "(" in selected_label else "강세 확인"
+                    st.info(f"💡 **Tip:** {tip}")
+
+            with tab2:
+                reflection = st.text_area("분석 결과를 바탕으로 개선할 점을 기록하세요.")
+                if st.button("마크다운 복사 코드 생성"):
+                    st.code(f"### Word Stress Analysis: {target_word}\n- Score: {calculate_stress_score(y_n, y_l, sr)}\n- Note: {reflection}")
 
         except Exception as e:
-            st.error(f"분석 중 오류 발생: {e}")
+            st.error(f"분석 엔진 오류: {e}")
