@@ -10,16 +10,17 @@ from pydub.silence import detect_nonsilent
 from difflib import SequenceMatcher
 
 # --- 유틸리티 함수 ---
-def get_speech_bounds(audio_segment, silence_thresh=-40, min_silence_len=100):
-    """실제 목소리가 시작되고 끝나는 지점(ms)을 반환 (임계값 -40dB로 강화)"""
+def get_speech_bounds(audio_segment, silence_thresh=-40, min_silence_len=100, buffer_ms=100):
+    """실제 목소리 시작/끝 감지 및 첫 음절 보호를 위한 버퍼 추가"""
     nonsilent_intervals = detect_nonsilent(audio_segment, 
                                            min_silence_len=min_silence_len, 
                                            silence_thresh=silence_thresh)
     if not nonsilent_intervals:
         return 0, len(audio_segment)
     
-    start_trim = nonsilent_intervals[0][0]
-    end_trim = nonsilent_intervals[-1][1]
+    # 시작점은 버퍼만큼 앞으로(첫 음절 보호), 끝점은 그대로
+    start_trim = max(0, nonsilent_intervals[0][0] - buffer_ms)
+    end_trim = min(len(audio_segment), nonsilent_intervals[-1][1] + 50)
     return start_trim, end_trim
 
 # --- 스트림릿 설정 ---
@@ -32,7 +33,7 @@ if 'start_time' not in st.session_state:
 if 'end_time' not in st.session_state:
     st.session_state.end_time = 0.0
 
-# [중략: sample_sentences 리스트 및 상단 UI 로직은 이전과 동일]
+# [중략: sample_sentences 리스트는 기존과 동일]
 sample_sentences = {
     "Level 01: (인사/기초)": "I am on my way.",
     "Level 02: (일상/기초)": "Nice room you have.",
@@ -62,7 +63,7 @@ selected_level = st.selectbox("Step 1: 학습 단계를 선택하세요:", list(
                               on_change=lambda: st.session_state.update({"analysis_done": False}))
 target_text = sample_sentences[selected_level]
 
-col1, col2, col3 = st.columns([1, 2, 1])
+col2 = st.columns([1, 2, 1])[1]
 with col2:
     st.markdown(f"""<div style="border: 2px solid #1f77b4; border-radius: 12px; padding: 15px; background-color: #f8f9fb; text-align: center; margin-bottom: 20px;"><h3 style="color: #1f77b4; margin: 0; font-weight: 700;">"{target_text}"</h3></div>""", unsafe_allow_html=True)
     rec_col2 = st.columns([1, 1, 1])[1]
@@ -100,30 +101,27 @@ if st.session_state.analysis_done:
         audio_stream = io.BytesIO(st.session_state.audio_bytes)
         full_audio = AudioSegment.from_file(audio_stream)
         
-        # 1. 학습자 오디오 크롭 및 저장
+        # 1. 학습자 오디오: 수동 선택 구간 + VAD 정밀 크롭
         start_ms, end_ms = st.session_state.start_time * 1000, st.session_state.end_time * 1000
         cropped_audio = full_audio[start_ms:end_ms]
-        cropped_audio.export("temp_learner.wav", format="wav")
+        l_s, l_e = get_speech_bounds(cropped_audio, buffer_ms=100) # 100ms 버퍼로 첫 음절 보호
+        final_learner = cropped_audio[l_s:l_e]
+        final_learner.export("temp_learner.wav", format="wav")
         full_audio.export("temp_stt.wav", format="wav")
         
-        # 2. [수정] 원어민 오디오 생성 및 공백 강제 제거
+        # 2. 원어민 오디오: 강력한 공백 제거
         tts = gTTS(text=target_text, lang='en')
         tts.save("temp_native.mp3")
         native_raw = AudioSegment.from_file("temp_native.mp3", format="mp3")
-        
-        # 임계값을 -40dB로 높여서 gTTS의 초기 여백을 확실히 제거
-        n_start, n_end = get_speech_bounds(native_raw, silence_thresh=-40)
-        native_proc = native_raw[n_start:n_end]
-        native_proc.export("temp_native.wav", format="wav")
+        n_start, n_end = get_speech_bounds(native_raw, silence_thresh=-35, buffer_ms=0) # 원어민은 버퍼 없이 타이트하게
+        final_native = native_raw[n_start:n_end]
+        final_native.export("temp_native.wav", format="wav")
 
         y_learner, sr_l = librosa.load("temp_learner.wav", sr=22050)
         y_native, _ = librosa.load("temp_native.wav", sr=sr_l)
 
-        # 3. 순수 발화 지점 재계산 (표시용)
-        l_s, l_e = get_speech_bounds(AudioSegment.from_file("temp_learner.wav"))
-        n_s, n_e = get_speech_bounds(AudioSegment.from_file("temp_native.wav"))
-        learner_speech_dur = (l_e - l_s) / 1000.0
-        native_speech_dur = (n_e - n_s) / 1000.0
+        learner_speech_dur = len(final_learner) / 1000.0
+        native_speech_dur = len(final_native) / 1000.0
 
         tab1, tab2, tab3, tab4 = st.tabs(["🎯 AI 점수", "⏱️ 유창성 분석", "🔊 음파 대조", "📈 피치 분석"])
 
@@ -144,21 +142,19 @@ if st.session_state.analysis_done:
                 except: st.error("인식 실패")
 
         with tab2:
-            st.subheader("순수 발화 구간 감지 (Detected Speech Range)")
+            st.subheader("순수 발화 구간 분석 (Detected Pure Speech)")
             fig_dur, (ax_n, ax_l) = plt.subplots(2, 1, figsize=(12, 5))
             librosa.display.waveshow(y_native, sr=sr_l, ax=ax_n, color='lightgray', alpha=0.5)
-            ax_n.axvline(x=n_s/1000, color='red', linestyle='--')
-            ax_n.axvline(x=n_e/1000, color='red', linestyle='--')
             ax_n.set_title(f"Native Speaker (Pure: {native_speech_dur:.2f}s)")
+            ax_n.axvline(x=0, color='red', linestyle='--') # 정렬되어 시작하므로 0 고정
             
             librosa.display.waveshow(y_learner, sr=sr_l, ax=ax_l, color='skyblue', alpha=0.7)
-            ax_l.axvline(x=l_s/1000, color='blue', linestyle='--')
-            ax_l.axvline(x=l_e/1000, color='blue', linestyle='--')
             ax_l.set_title(f"Learner (Pure: {learner_speech_dur:.2f}s)")
-            plt.tight_layout(); st.pyplot(fig_dur)
+            ax_l.axvline(x=0.1, color='blue', linestyle='--', label="Buffer Applied") # 버퍼 적용 지점 표시
             
+            plt.tight_layout(); st.pyplot(fig_dur)
             ratio = (learner_speech_dur / native_speech_dur) * 100 if native_speech_dur > 0 else 0
-            st.info(f"💡 원어민 대비 발화 시간 비율: **{int(ratio)}%**")
+            st.info(f"💡 발화 속도 비율: **{int(ratio)}%** (원어민 대비)")
 
         with tab3:
             fig_wave, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 4))
