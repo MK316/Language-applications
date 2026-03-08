@@ -11,14 +11,8 @@ from difflib import SequenceMatcher
 
 # --- 유틸리티 함수 ---
 def get_speech_bounds(audio_segment, silence_thresh=-40, min_silence_len=100, buffer_ms=100):
-    """실제 목소리 시작/끝 감지 및 시작점 정렬을 위한 버퍼 적용"""
-    nonsilent_intervals = detect_nonsilent(audio_segment, 
-                                           min_silence_len=min_silence_len, 
-                                           silence_thresh=silence_thresh)
-    if not nonsilent_intervals:
-        return 0, len(audio_segment)
-    
-    # 시작점은 버퍼만큼 앞으로(첫 음절 보호), 끝점은 여유있게 확보
+    nonsilent_intervals = detect_nonsilent(audio_segment, min_silence_len=min_silence_len, silence_thresh=silence_thresh)
+    if not nonsilent_intervals: return 0, len(audio_segment)
     start_trim = max(0, nonsilent_intervals[0][0] - buffer_ms)
     end_trim = min(len(audio_segment), nonsilent_intervals[-1][1] + 50)
     return start_trim, end_trim
@@ -33,7 +27,6 @@ if 'start_time' not in st.session_state:
 if 'end_time' not in st.session_state:
     st.session_state.end_time = 0.0
 
-# [샘플 문장 리스트]
 sample_sentences = {
     "Level 01: (인사/기초)": "I am on my way.",
     "Level 02: (일상/기초)": "Nice room you have.",
@@ -101,7 +94,6 @@ if st.session_state.analysis_done:
         audio_stream = io.BytesIO(st.session_state.audio_bytes)
         full_audio = AudioSegment.from_file(audio_stream)
         
-        # 1. 학습자 오디오 크롭 및 0초 정렬
         start_ms, end_ms = st.session_state.start_time * 1000, st.session_state.end_time * 1000
         cropped_audio = full_audio[start_ms:end_ms]
         l_s, l_e = get_speech_bounds(cropped_audio, buffer_ms=100)
@@ -109,7 +101,6 @@ if st.session_state.analysis_done:
         final_learner.export("temp_learner.wav", format="wav")
         full_audio.export("temp_stt.wav", format="wav")
         
-        # 2. 원어민 오디오 크롭 및 0초 정렬
         tts = gTTS(text=target_text, lang='en')
         tts.save("temp_native.mp3")
         native_raw = AudioSegment.from_file("temp_native.mp3", format="mp3")
@@ -142,26 +133,41 @@ if st.session_state.analysis_done:
                 except: st.error("인식 실패")
 
         with tab2:
-            st.subheader("순수 발화 구간 분석 (Detected Pure Speech)")
-            # [시각적 개선] 두 파형 모두 0초부터 시작
+            st.subheader("순수 발화 구간 및 속도 편차")
             fig_dur, (ax_n, ax_l) = plt.subplots(2, 1, figsize=(12, 5))
             librosa.display.waveshow(y_native, sr=sr_l, ax=ax_n, color='lightgray', alpha=0.5)
-            ax_n.axvline(x=0, color='red', linestyle='--')
-            ax_n.axvline(x=native_speech_dur, color='red', linestyle='--')
+            ax_n.axvline(x=0, color='red', linestyle='--'); ax_n.axvline(x=native_speech_dur, color='red', linestyle='--')
             ax_n.set_title(f"Native Speaker (Pure: {native_speech_dur:.2f}s)")
-            
             librosa.display.waveshow(y_learner, sr=sr_l, ax=ax_l, color='skyblue', alpha=0.7)
-            ax_l.axvline(x=0, color='blue', linestyle='--')
-            ax_l.axvline(x=learner_speech_dur, color='blue', linestyle='--')
+            ax_l.axvline(x=0, color='blue', linestyle='--'); ax_l.axvline(x=learner_speech_dur, color='blue', linestyle='--')
             ax_l.set_title(f"Learner (Pure: {learner_speech_dur:.2f}s)")
             plt.tight_layout(); st.pyplot(fig_dur)
             
-            # [핵심 수정] 백분율 대신 원어민 대비 편차(+/- %)로 표기
             diff_ratio = ((learner_speech_dur / native_speech_dur) - 1) * 100
             diff_text = f"{'+' if diff_ratio >= 0 else ''}{int(diff_ratio)}%"
             
-            st.info(f"💡 원어민 대비 발화 속도 편차: **{diff_text}**")
-            st.caption("※ (+)는 원어민보다 천천히, (-)는 원어민보다 빠르게 말했음을 의미합니다.")
+            # [해석 가이드 적용]
+            if abs(diff_ratio) <= 10:
+                st.success(f"✅ **Optimal: 원어민과 거의 유사한 속도입니다. ({diff_text})**")
+            elif 10 < diff_ratio <= 25:
+                st.info(f"🟢 **Acceptable: 명확하고 자연스러운 속도입니다. ({diff_text})**")
+            elif diff_ratio > 25:
+                st.warning(f"🟠 **Slow: 조금 더 연음(Linking)을 활용해 빠르게 읽어보세요. ({diff_text})**")
+            else:
+                st.error(f"🔴 **Too Fast: 발음이 뭉개질 수 있으니 조금만 천천히 읽어보세요. ({diff_text})**")
+
+            with st.expander("📚 발화 속도 해석 근거 및 참고문헌"):
+                st.markdown("""
+                **1. 해석 가이드라인:**
+                * **±10% 이내:** 원어민 수준의 유창성 (Native-like Fluency).
+                * **+10% ~ +25%:** 이해 가능한 수준의 안정적인 발화 (Intelligible).
+                * **+25% 초과:** 과도한 휴지(Pause) 혹은 음소 연장으로 인한 유창성 저하.
+                
+                **2. 참고 문헌:**
+                * **Munro, M. J., & Derwing, T. M. (1995).** Foreign accent, comprehensibility, and intelligibility: Evidence from L2 learners. *Language Learning*.
+                * **Derwing, T. M., & Munro, M. J. (2001).** What makes accent-free speakers? *Journal of Phonetics*.
+                * **ACTFL Proficiency Guidelines:** 유창성 단계별 발화 속도 및 시간적 지표 기준.
+                """)
 
         with tab3:
             fig_wave, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 4))
