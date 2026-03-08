@@ -45,7 +45,7 @@ if audio and audio['id'] != st.session_state.get('prev_audio_key'):
     st.session_state.analysis_ready = False
     st.session_state.prev_audio_key = audio['id']
 
-# --- 3. 녹음 후 구간 설정 및 분석 준비 ---
+# --- 3. 녹음 후 구간 설정 ---
 if audio:
     st.divider()
     audio_bytes = audio['bytes']
@@ -55,7 +55,6 @@ if audio:
     y_full, sr_f = librosa.load("temp_entry.wav", sr=22050)
     duration_sec = len(y_full) / sr_f
     
-    # [변경] 준비 완료 메시지
     if not st.session_state.analysis_ready:
         st.info("💡 **분석할 준비가 되었습니다.** 슬라이더로 구간을 맞춘 뒤 아래 버튼을 눌러주세요.")
     
@@ -76,11 +75,11 @@ if audio:
         st.session_state.final_start = trim_range[0]
         st.session_state.final_end = trim_range[1]
 
-# --- 4. 상세 분석 결과 ---
+# --- 4. 상세 분석 결과 (모든 탭 복구) ---
 if st.session_state.analysis_ready:
     p_l = p_n_m = p_n_w = p_stt = None
-    # [수정] spinner 내부에서 모든 연산과 성공 메시지 처리
-    with st.spinner("🚀 AI 분석 엔진이 당신의 발음과 억양을 세밀하게 대조 중입니다. 잠시만 기다려주세요..."):
+    # 스피너를 먼저 실행
+    with st.spinner("🚀 AI 분석 엔진 가동 중... 잠시만 기다려주세요."):
         try:
             full_audio = AudioSegment.from_file(io.BytesIO(st.session_state.final_audio_bytes))
             s_ms, e_ms = st.session_state.final_start * 1000, st.session_state.final_end * 1000
@@ -97,19 +96,23 @@ if st.session_state.analysis_ready:
             n_s, n_e = get_speech_bounds(n_raw, silence_thresh=-35)
             final_n_seg = n_raw[n_s:n_e]; final_n_seg.export(p_n_w, format="wav")
 
-            y_l, sr = librosa.load(p_l, sr=22050); y_n, _ = librosa.load(p_n_w, sr=sr)
+            y_l, sr_curr = librosa.load(p_l, sr=22050)
+            y_n, _ = librosa.load(p_n_wav if 'p_n_w' in locals() and p_n_w else p_n_w, sr=sr_curr)
+            # 위 로직 오타 방지용 재선언
+            y_n, _ = librosa.load(p_n_w, sr=sr_curr)
+            
             l_dur, n_dur = len(final_l_seg)/1000.0, len(final_n_seg)/1000.0
 
-            # [수정] 모든 연산이 완벽히 끝난 후 spinner가 닫히기 직전에 메시지 노출
-            st.success("🎉 분석 완료! 이제 아래 탭에서 당신의 발음 데이터를 확인해 보세요.")
+            # 스피너 안에서 모든 연산이 끝난 직후에 성공 메시지 출력
+            st.success("🎉 분석 완료! 결과를 확인하세요.")
 
             ac1, ac2 = st.columns(2)
             with ac1: st.write("🎙️ **나의 발음**"); st.audio(p_l)
             with ac2: st.write("🔊 **원어민 발음**"); st.audio(p_n_w)
 
-            tab1, tab2, tab3, tab4 = st.tabs(["🎯 AI 점수", "⏱️ 유창성", "🔊 음파 대조", "📈 피치 분석"])
+            tab1, tab2, tab3, tab4 = st.tabs(["🎯 AI 점수", "⏱️ 유창성 분석", "🔊 음파 대조", "📈 피치 분석"])
 
-            # 각 탭 로직 (중복되므로 생략하지만 실제 코드에는 포함됨)
+            # --- 탭 1: 정확도 ---
             with tab1:
                 recognizer = speech_rec.Recognizer()
                 with speech_rec.AudioFile(p_stt) as source:
@@ -124,16 +127,40 @@ if st.session_state.analysis_ready:
                         with c2: st.success(f"인식 결과: {text_res}")
                     except: st.error("인식 실패")
 
-            # ... (Tab 2, 3 로직 동일)
+            # --- 탭 2: 유창성 분석 (복구) ---
+            with tab2:
+                st.subheader("발화 속도 및 구간 비교")
+                fig_dur, (axl, axn) = plt.subplots(2, 1, figsize=(12, 5))
+                librosa.display.waveshow(y_l, sr=sr_curr, ax=axl, color='skyblue')
+                librosa.display.waveshow(y_n, sr=sr_curr, ax=axn, color='lightgray')
+                axl.set_title(f"My Speaking ({l_dur:.2f}s)")
+                axn.set_title(f"Native Speaker ({n_dur:.2f}s)")
+                plt.tight_layout(); st.pyplot(fig_dur)
+                diff = ((l_dur / n_dur) - 1) * 100
+                st.info(f"💡 원어민 대비 발화 속도가 약 **{abs(int(diff))}% {'느립니다' if diff>0 else '빠릅니다'}**.")
+
+            # --- 탭 3: 음파 대조 (복구) ---
+            with tab3:
+                st.subheader("음압 및 파형 비교")
+                fig_w, (axw1, axw2) = plt.subplots(2, 1, figsize=(12, 6))
+                librosa.display.waveshow(y_l, sr=sr_curr, ax=axw1, color='skyblue')
+                axw1.set_title("Learner Waveform")
+                librosa.display.waveshow(y_n, sr=sr_curr, ax=axw2, color='lightgray')
+                axw2.set_title("Native Waveform")
+                plt.tight_layout(); st.pyplot(fig_w)
+
+            # --- 탭 4: 피치 분석 ---
             with tab4:
                 st.subheader("억양 멜로디 분석 (Pitch Contour)")
                 f0_l, v_l, p_l_v = librosa.pyin(y_l, fmin=75, fmax=400, hop_length=64)
                 f0_n, v_n, p_n_v = librosa.pyin(y_n, fmin=60, fmax=400, hop_length=64)
                 f0_l_f = np.where(v_l & (p_l_v > 0.15), f0_l, np.nan)
                 f0_n_f = np.where(v_n & (p_n_v > 0.01), f0_n, np.nan)
+                
                 fig_p, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 4), sharey=True)
-                ax1.plot(librosa.times_like(f0_l, sr=sr, hop_length=64), f0_l_f, color='#1f77b4', linestyle=':', marker='o', markersize=2)
-                ax2.plot(librosa.times_like(f0_n, sr=sr, hop_length=64), f0_n_f, color='gray', linestyle=':', marker='o', markersize=2)
+                ax1.plot(librosa.times_like(f0_l, sr=sr_curr, hop_length=64), f0_l_f, color='#1f77b4', linestyle=':', marker='o', markersize=2)
+                ax2.plot(librosa.times_like(f0_n, sr=sr_curr, hop_length=64), f0_n_f, color='gray', linestyle=':', marker='o', markersize=2)
+                ax1.set_title("Your Pitch (Dotted)"); ax2.set_title("Native Pitch (Dotted)")
                 st.pyplot(fig_p)
 
         except Exception as e:
