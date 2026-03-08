@@ -43,23 +43,26 @@ def detect_syllable_stress(y, sr):
     weighted_env = (env / (np.max(env) + 1e-6)) * 0.8 + (env / (np.sum(env) + 1e-6)) * 0.2
     return np.argmax(weighted_env), env
 
-def calculate_score(env_n, env_l):
-    if len(env_n) < 2 or len(env_l) < 2: return 0, 0, 0
+def calculate_normalized_score(env_n, env_l):
+    """시간 정규화를 통해 발화 속도 차이를 제거하고 리듬 형태만 비교"""
+    if len(env_n) < 2 or len(env_l) < 2: return 0, np.zeros(100), np.zeros(100)
+    
+    # 0~100% 타임라인으로 정규화
+    standard_x = np.linspace(0, 1, 100)
     f_n = interp1d(np.linspace(0, 1, len(env_n)), env_n, fill_value="extrapolate")
     f_l = interp1d(np.linspace(0, 1, len(env_l)), env_l, fill_value="extrapolate")
-    new_x = np.linspace(0, 1, 100)
-    # 리듬 상관관계 분석
-    shape_corr = np.corrcoef(f_n(new_x), f_l(new_x))[0, 1]
     
-    dur_n = np.sum(env_n > np.max(env_n)*0.2) / len(env_n)
-    dur_l = np.sum(env_l > np.max(env_l)*0.2) / len(env_l)
+    norm_n = f_n(standard_x)
+    norm_l = f_l(standard_x)
     
-    final_score = int(max(0, shape_corr) * 100)
-    return final_score, dur_l * 100, dur_n * 100
+    # 정규화된 리듬 상관계수 계산
+    shape_corr = np.corrcoef(norm_n, norm_l)[0, 1]
+    score = int(max(0, shape_corr) * 100)
+    return score, norm_n, norm_l
 
-# --- [3] 메인 UI ---
+# --- [3] 메인 UI: 입력 섹션 ---
 st.title("🎙️ Word Stress Master")
-word_db = {"Photograph (1음절 강세)": "photograph", "Photographer (2음절 강세)": "photographer", "Education (3음절 강세)": "education", "Record (Noun)": "record", "Record (Verb)": "record"}
+word_db = {"Photograph": "photograph", "Photographer": "photographer", "Education": "education", "Record (N)": "record", "Record (V)": "record"}
 target_word = word_db[st.selectbox("학습할 단어 선택:", list(word_db.keys()))]
 
 if st.button("🔊 원어민 표준 발음 듣기"):
@@ -85,7 +88,8 @@ if audio:
     as_ms, ae_ms = auto_b[0] if auto_b else (0, len(l_raw))
     trim_range = st.slider("구간 조절:", 0.0, float(len(y_full)/sr_f), (float(as_ms/1000), float(ae_ms/1000)), step=0.01)
 
-    fig_p = plt.figure(figsize=(10, 2.2)); axp = fig_p.add_axes([0, 0.2, 1, 0.8])
+    fig_p, axp = plt.subplots(figsize=(10, 2.2))
+    plt.subplots_adjust(left=0, right=1, bottom=0.2, top=0.8)
     librosa.display.waveshow(y_full, sr=sr_f, ax=axp, color='skyblue', alpha=0.5)
     axp.axvline(x=trim_range[0], color='red', lw=2, ls='--'); axp.axvline(x=trim_range[1], color='red', lw=2, ls='--')
     axp.set_xlim(0, len(y_full)/sr_f); axp.set_yticks([]); st.pyplot(fig_p)
@@ -100,7 +104,6 @@ if audio:
             st.session_state.analysis_done = True
             st.session_state.final_y_l = y_full[int(trim_range[0]*sr_f):int(trim_range[1]*sr_f)]
             st.session_state.current_sr = sr_f
-            # 분석용 오디오 바이트 저장
             st.session_state.final_audio_l = trimmed_audio
     with c2:
         if st.button("🔄 연습 리셋"):
@@ -108,15 +111,13 @@ if audio:
             st.session_state.last_audio_id, st.session_state.analysis_done, st.session_state.final_y_l = None, False, None
             st.rerun()
 
-# --- [4] 결과 분석 및 좌우 오디오 대조 섹션 ---
+# --- [4] 결과 분석 섹션 ---
 if st.session_state.analysis_done and st.session_state.final_y_l is not None:
     y_l, sr = st.session_state.final_y_l, st.session_state.current_sr
-    with st.spinner("리듬 일치도 계산 중..."):
+    with st.spinner("리듬 정규화 및 분석 중..."):
         try:
-            # 원어민 데이터 생성
             tts = gTTS(text=target_word, lang='en'); n_mp3 = io.BytesIO(); tts.write_to_fp(n_mp3); n_mp3.seek(0)
-            n_seg_full = AudioSegment.from_file(n_mp3)
-            n_seg = safe_trim_v2(n_seg_full)
+            n_seg = safe_trim_v2(AudioSegment.from_file(n_mp3))
             y_n = np.array(n_seg.get_array_of_samples(), dtype=np.float32) / (2**15)
             if n_seg.channels > 1: y_n = y_n.reshape((-1, n_seg.channels)).mean(axis=1)
             
@@ -124,34 +125,39 @@ if st.session_state.analysis_done and st.session_state.final_y_l is not None:
             p_idx_l, env_l = detect_syllable_stress(y_l_norm, sr)
             p_idx_n, env_n = detect_syllable_stress(y_n_norm, sr)
             
-            # [수정] 점수 계산 로직 복구
-            score, dur_l, dur_n = calculate_score(env_n, env_l)
+            # [핵심] 시간 정규화 점수 및 데이터 산출
+            score, norm_n, norm_l = calculate_normalized_score(env_n, env_l)
 
             st.divider()
-            # [수정] 점수 메트릭 표시
-            m_col1, m_col2 = st.columns(2)
-            m_col1.metric("종합 리듬 점수", f"{score}점")
-            m_col2.metric("강세 에너지 비중", f"{dur_l:.1f}%", f"{dur_l-dur_n:+.1f}% vs 원어민")
+            st.metric("종합 리듬 일치도 (속도 보정 완료)", f"{score}점")
 
-            # [핵심 추가] 좌우 오디오 대조 플레이어
-            st.markdown("### 🎧 소리 대조 학습")
+            # 좌우 오디오 대조
             a_col1, a_col2 = st.columns(2)
-            with a_col1:
-                st.write("🙋 나의 발음")
-                st.audio(st.session_state.final_audio_l.export(io.BytesIO(), format="wav").getvalue())
-            with a_col2:
-                st.write("🎙️ 원어민 표준")
-                st.audio(n_seg.export(io.BytesIO(), format="wav").getvalue())
+            with a_col1: st.write("🙋 나의 발음"); st.audio(st.session_state.final_audio_l.export(io.BytesIO(), format="wav").getvalue())
+            with a_col2: st.write("🎙️ 원어민 표준"); st.audio(n_seg.export(io.BytesIO(), format="wav").getvalue())
 
-            # 그래프 시각화
-            fig_res, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6)); mt = max(len(y_l), len(y_n)) / sr
-            for ax, y, env, p, t, col in [(ax1, y_l_norm, env_l, p_idx_l, "My Rhythm Profile", "skyblue"), 
-                                          (ax2, y_n_norm, env_n, p_idx_n, "Native Standard Profile", "lightgray")]:
-                times = np.linspace(0, len(y)/sr, len(env))
+            # 1. 기존 파형 비교 (절대 시간축)
+            st.write("### 📏 절대 시간 기반 비교")
+            fig_abs, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 5))
+            mt = max(len(y_l), len(y_n)) / sr
+            for ax, y, env, p, t, col in [(ax1, y_l_norm, env_l, p_idx_l, "My Rhythm", "skyblue"), (ax2, y_n_norm, env_n, p_idx_n, "Native Standard", "lightgray")]:
+                ts = np.linspace(0, len(y)/sr, len(env))
                 librosa.display.waveshow(y, sr=sr, ax=ax, color=col, alpha=0.3)
-                ax.plot(times, env, color='#1f77b4' if col=="skyblue" else "gray", lw=2.5)
-                ax.fill_between(times, 0, env, where=(env > np.max(env)*0.2), color='#1f77b4' if col=="skyblue" else "gray", alpha=0.3)
-                ax.axvline(x=times[p], color='red', lw=3); ax.set_title(t); ax.set_xlim(0, mt)
-            plt.tight_layout(); st.pyplot(fig_res)
+                ax.plot(ts, env, color='#1f77b4' if col=="skyblue" else "gray", lw=2)
+                ax.axvline(x=ts[p], color='red', lw=3); ax.set_title(t); ax.set_xlim(0, mt)
+            plt.tight_layout(); st.pyplot(fig_abs)
+
+            # 2. 정규화 오버레이 그래프 (상대 리듬축)
+            st.write("### 🔄 시간 정규화 리듬 패턴 대조")
             
+            fig_norm, axn = plt.subplots(figsize=(10, 4))
+            x_range = np.linspace(0, 100, 100)
+            axn.fill_between(x_range, 0, norm_n, color='gray', alpha=0.2, label='Native Guide')
+            axn.plot(x_range, norm_n, color='gray', lw=1, ls='--')
+            axn.plot(x_range, norm_l, color='#ff4b4b', lw=3, label='My Rhythm')
+            axn.set_title("Rhythm Pattern Overlay (0-100% Timeline)")
+            axn.set_xlabel("Progression (%)"); axn.set_ylabel("Energy"); axn.legend()
+            st.pyplot(fig_norm)
+            st.info("💡 빨간 선(나)이 회색 영역(원어민)과 비슷하게 솟아오를수록 좋은 리듬입니다. 가로축은 속도 편차를 제거한 '단어의 진행도'입니다.")
+
         except Exception as e: st.error(f"분석 오류: {e}")
