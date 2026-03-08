@@ -3,6 +3,7 @@ from streamlit_mic_recorder import mic_recorder
 import speech_recognition as sr
 import io, os, librosa, librosa.display
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker  # 눈금 제어를 위해 추가
 import numpy as np
 from gtts import gTTS
 from pydub import AudioSegment
@@ -28,7 +29,7 @@ st.set_page_config(page_title="AI 발음 분석기", layout="wide")
 if 'analysis_done' not in st.session_state:
     st.session_state.analysis_done = False
 
-# [샘플 문장 리스트]
+# [샘플 문장 리스트 동일]
 sample_sentences = {
     "Level 01: (인사/기초)": "I am on my way.",
     "Level 02: (일상/기초)": "Nice room you have.",
@@ -74,9 +75,8 @@ if audio:
     duration_sec = len(full_audio) / 1000.0
     y_full, sr_f = librosa.load("temp_preview.wav", sr=22050)
     
-    st.subheader("✂️ 발화 구간 및 줌 설정 (Precision Trimming)")
+    st.subheader("✂️ 발화 구간 및 줌 설정 (High-Precision)")
     
-    # [줌 설정 레이아웃]
     c_zoom, c_input = st.columns([1, 1])
     with c_zoom:
         zoom_range = st.slider("🔍 파형 확대 범위 (Zoom Window):", 0.0, duration_sec, (0.0, duration_sec), step=0.01)
@@ -87,12 +87,19 @@ if audio:
         start_val = in_col1.number_input("시작 시간 (sec):", 0.0, duration_sec, float(v_start_init/1000), step=0.01, format="%.2f")
         end_val = in_col2.number_input("종료 시간 (sec):", 0.0, duration_sec, float(v_end_init/1000), step=0.01, format="%.2f")
 
-    # [줌이 적용된 파형 그래프]
-    fig_p, ax = plt.subplots(figsize=(12, 3))
+    # [수정] 고해상도 눈금이 적용된 그래프
+    fig_p, ax = plt.subplots(figsize=(12, 4))
     librosa.display.waveshow(y_full, sr=sr_f, ax=ax, color='skyblue', alpha=0.6)
-    ax.axvline(x=start_val, color='red', linestyle='--', label='Start Trim')
-    ax.axvline(x=end_val, color='red', linestyle='--', label='End Trim')
-    ax.set_xlim(zoom_range) # 줌 적용
+    
+    # 0.1초 단위 Major Tick, 0.05초 단위 Minor Tick 설정
+    ax.xaxis.set_major_locator(ticker.MultipleLocator(0.1))
+    ax.xaxis.set_minor_locator(ticker.MultipleLocator(0.05))
+    ax.grid(which='both', axis='x', color='gray', linestyle='--', alpha=0.3) # 그리드 추가
+    
+    ax.axvline(x=start_val, color='red', linestyle='-', linewidth=2, label='Start Trim')
+    ax.axvline(x=end_val, color='red', linestyle='-', linewidth=2, label='End Trim')
+    ax.set_xlim(zoom_range) 
+    ax.set_xlabel("Time (seconds) - 0.1s Grids")
     ax.legend(loc='upper right')
     st.pyplot(fig_p)
     
@@ -108,8 +115,6 @@ if st.session_state.analysis_done:
     try:
         audio_stream = io.BytesIO(st.session_state.audio_bytes)
         full_audio = AudioSegment.from_file(audio_stream)
-        
-        # 크롭 및 저장
         s_ms, e_ms = st.session_state.start_time * 1000, st.session_state.end_time * 1000
         cropped_audio = full_audio[s_ms:e_ms]
         l_s, l_e = get_speech_bounds(cropped_audio, buffer_ms=100)
@@ -117,7 +122,6 @@ if st.session_state.analysis_done:
         final_learner.export("temp_learner.wav", format="wav")
         full_audio.export("temp_stt.wav", format="wav")
         
-        # 원어민 생성
         tts = gTTS(text=target_text, lang='en')
         tts.save("temp_native.mp3")
         native_raw = AudioSegment.from_file("temp_native.mp3", format="mp3")
@@ -129,7 +133,6 @@ if st.session_state.analysis_done:
         y_native, _ = librosa.load("temp_native.wav", sr=sr_l)
         l_dur, n_dur = len(final_learner)/1000.0, len(final_native)/1000.0
 
-        # 공통 오디오
         st.divider()
         ac1, ac2 = st.columns(2)
         with ac1: st.write("🎙️ **나의 발음**"); st.audio("temp_learner.wav")
@@ -137,6 +140,7 @@ if st.session_state.analysis_done:
 
         tab1, tab2, tab3, tab4 = st.tabs(["🎯 AI 점수", "⏱️ 유창성 분석", "🔊 음파 대조", "📈 피치 분석"])
 
+        # [이후 분석 탭 로직 동일하여 생략]
         with tab1:
             r = sr.Recognizer()
             with sr.AudioFile("temp_stt.wav") as source:
