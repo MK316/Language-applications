@@ -21,7 +21,6 @@ def get_net_speaking_time(audio_path):
 # --- 스트림릿 설정 ---
 st.set_page_config(page_title="AI 발음 분석기", layout="wide")
 
-# 세션 상태 초기화
 if 'analysis_done' not in st.session_state:
     st.session_state.analysis_done = False
 if 'start_time' not in st.session_state:
@@ -54,12 +53,10 @@ sample_sentences = {
 
 st.markdown("### 🎙️ AI 활용 발음 연습")
 
-# 1. 문장 선택
 selected_level = st.selectbox("Step 1: 학습 단계를 선택하세요:", list(sample_sentences.keys()), 
                               on_change=lambda: st.session_state.update({"analysis_done": False}))
 target_text = sample_sentences[selected_level]
 
-# 문장 표시 박스
 col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
     st.markdown(f"""
@@ -69,53 +66,51 @@ with col2:
         </div>
         """, unsafe_allow_html=True)
     
-    # 2. 녹음 버튼
     rec_col1, rec_col2, rec_col3 = st.columns([1, 1, 1])
     with rec_col2:
         audio = mic_recorder(start_prompt="🎤 Step 2: 녹음 시작", stop_prompt="🛑 녹음 완료", key="recorder")
 
-# 3. [개선] 녹음 직후 구간 조절 UI 노출
 if audio:
     st.divider()
     st.subheader("✂️ 발화 구간 조정 (Trim Recording)")
     
+    # [해결 핵심] librosa.load 대신 pydub을 거쳐 임시 WAV 파일을 생성하고 이를 로드합니다.
     audio_bytes = audio['bytes']
     audio_stream = io.BytesIO(audio_bytes)
     full_audio = AudioSegment.from_file(audio_stream)
+    full_audio.export("temp_preview.wav", format="wav") # 임시 WAV 파일 생성
+    
     duration_sec = len(full_audio) / 1000.0
     
-    # 파형 시각화 (원본 전체 파형)
-    y_full, sr_f = librosa.load(audio_stream, sr=22050)
-    fig_preview, ax = plt.subplots(figsize=(12, 2))
-    librosa.display.waveshow(y_full, sr=sr_f, ax=ax, color='skyblue', alpha=0.7)
-    ax.set_title("Full Recording Waveform")
+    # 이제 librosa는 안전하게 WAV 파일을 읽을 수 있습니다.
+    y_full, sr_f = librosa.load("temp_preview.wav", sr=22050)
+    
+    fig_preview, ax = plt.subplots(figsize=(12, 2.5))
+    librosa.display.waveshow(y_full, sr=sr_f, ax=ax, color='skyblue', alpha=0.8)
+    ax.set_title("Full Recording Waveform (Preview)")
     ax.set_xlabel("Time (s)")
     st.pyplot(fig_preview)
     
-    # 조절 레이아웃
     c_play, c_slide = st.columns([1, 2])
     with c_play:
-        st.write("🎧 전체 소리 듣기")
+        st.write("🎧 원본 소리 듣기")
         st.audio(audio_bytes)
     
     with c_slide:
-        time_range = st.slider("분석할 실제 목소리 구간만 선택하세요:", 
+        time_range = st.slider("분석할 목소리 구간만 선택 (비프음 제외):", 
                                0.0, duration_sec, (0.0, duration_sec), step=0.1)
         
-    # 분석 실행 버튼
     if st.button("📊 Step 3: 지정된 구간으로 결과 분석하기", use_container_width=True):
         st.session_state.analysis_done = True
         st.session_state.audio_bytes = audio_bytes
         st.session_state.start_time = time_range[0]
         st.session_state.end_time = time_range[1]
 
-# 4. 분석 결과 표시
 if st.session_state.analysis_done:
     try:
         audio_stream = io.BytesIO(st.session_state.audio_bytes)
         full_audio = AudioSegment.from_file(audio_stream)
         
-        # 지정된 시간으로 크롭
         start_ms = st.session_state.start_time * 1000
         end_ms = st.session_state.end_time * 1000
         cropped_audio = full_audio[start_ms:end_ms]
@@ -123,7 +118,6 @@ if st.session_state.analysis_done:
         full_audio.export("temp_stt.wav", format="wav")
         cropped_audio.export("temp_learner.wav", format="wav")
         
-        # 원어민 TTS 생성
         tts = gTTS(text=target_text, lang='en')
         tts.save("temp_native.mp3")
         native_raw = AudioSegment.from_file("temp_native.mp3", format="mp3")
@@ -140,7 +134,7 @@ if st.session_state.analysis_done:
 
         with tab1:
             r = sr.Recognizer()
-            with sr.AudioFile("temp_stt.wav") as source: # 인식은 문장 보존을 위해 원본 사용
+            with sr.AudioFile("temp_stt.wav") as source:
                 r.adjust_for_ambient_noise(source, duration=0.5)
                 audio_data = r.record(source)
                 try:
@@ -165,7 +159,7 @@ if st.session_state.analysis_done:
             c3.metric("속도 비율", f"{int(ratio)}%")
 
         with tab3:
-            st.info(f"선택된 구간: {st.session_state.start_time}s ~ {st.session_state.end_time}s")
+            st.info(f"선택 구간: {st.session_state.start_time}s ~ {st.session_state.end_time}s")
             fig_wave, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 4))
             librosa.display.waveshow(y_native, sr=sr_l, ax=ax1, color='lightgray')
             librosa.display.waveshow(y_learner, sr=sr_l, ax=ax2, color='skyblue')
@@ -183,5 +177,6 @@ if st.session_state.analysis_done:
 
     except Exception as e: st.error(f"오류: {e}")
     finally:
-        for f in ["temp_native.mp3", "temp_native.wav", "temp_learner.wav", "temp_stt.wav"]:
+        # 임시 파일들 삭제
+        for f in ["temp_native.mp3", "temp_native.wav", "temp_learner.wav", "temp_stt.wav", "temp_preview.wav"]:
             if os.path.exists(f): os.remove(f)
