@@ -8,19 +8,18 @@ from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 from scipy.interpolate import interp1d
 
-# --- [1] 모바일 레이아웃 및 CSS 설정 ---
+# --- [1] 레이아웃 및 CSS ---
 st.set_page_config(page_title="Word Stress Master", layout="centered")
 
 st.markdown("""
     <style>
-    /* 슬라이더와 그래프 너비 동기화 */
     .stSlider { padding-left: 0px; padding-right: 0px; }
     .main .block-container { padding-top: 1rem; }
     
-    /* [핵심] 버튼 크기 및 배치 통일 CSS */
+    /* 버튼 5:5 가로 배치 및 크기 통일 */
     div[data-testid="stHorizontalBlock"] div[data-testid="stVerticalBlock"] > div button {
         width: 100% !important;
-        height: 3.5em !important; /* 높이 고정 */
+        height: 3.5em !important;
         font-weight: bold !important;
         font-size: 15px !important;
         border-radius: 10px !important;
@@ -29,7 +28,7 @@ st.markdown("""
         justify-content: center;
     }
     
-    /* 녹음 버튼 강조 (왼쪽) */
+    /* 녹음 버튼 (왼쪽) */
     div[data-testid="stHorizontalBlock"] > div:nth-child(1) button {
         background-color: #ff4b4b !important;
         color: white !important;
@@ -45,7 +44,8 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 세션 상태 초기화
+# 세션 상태 초기화 (리셋용 key 추가)
+if 'reset_key' not in st.session_state: st.session_state.reset_key = 0
 if 'last_audio_id' not in st.session_state: st.session_state.last_audio_id = None
 if 'analysis_done' not in st.session_state: st.session_state.analysis_done = False
 if 'final_y_l' not in st.session_state: st.session_state.final_y_l = None
@@ -98,20 +98,24 @@ if st.button("🔊 원어민 표준 발음 듣기"):
 
 st.divider()
 
-# --- [4] 핵심 수정: 버튼 가로 5:5 배치 (녹음 왼쪽, 리셋 오른쪽) ---
+# --- [4] 리셋 및 녹음 컨트롤 (완전 리셋 로직 적용) ---
 st.subheader(f"🎯 연습: {target_word.upper()}")
 
 col_l, col_r = st.columns(2)
 
 with col_l:
+    # reset_key를 key에 포함시켜 리셋 시 컴포넌트를 새로 생성함
     audio = mic_recorder(
         start_prompt="🎤 녹음 시작",
         stop_prompt="🛑 완료",
-        key="word_recorder"
+        key=f"recorder_{st.session_state.reset_key}"
     )
 
 with col_r:
     if st.button("🔄 리셋"):
+        # 1. 컴포넌트 ID 변경 (녹음 파일 강제 삭제)
+        st.session_state.reset_key += 1
+        # 2. 분석 데이터 초기화
         st.session_state.last_audio_id = None
         st.session_state.analysis_done = False
         st.session_state.final_y_l = None
