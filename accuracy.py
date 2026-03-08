@@ -75,25 +75,19 @@ if audio:
     y_full, sr_f = librosa.load("temp_preview.wav", sr=22050)
     
     st.subheader("✂️ 발화 구간 및 줌 설정")
-    
     c_zoom, c_input = st.columns([1, 1])
-    with c_zoom:
-        zoom_range = st.slider("🔍 파형 확대 범위 (Zoom Window):", 0.0, duration_sec, (0.0, duration_sec), step=0.01)
-    
+    with c_zoom: zoom_range = st.slider("🔍 파형 확대 범위 (Zoom Window):", 0.0, duration_sec, (0.0, duration_sec), step=0.01)
     with c_input:
         in_col1, in_col2 = st.columns(2)
-        v_start_init, v_end_init = get_speech_bounds(full_audio)
-        start_val = in_col1.number_input("시작 시간 (sec):", 0.0, duration_sec, float(v_start_init/1000), step=0.01, format="%.2f")
-        end_val = in_col2.number_input("종료 시간 (sec):", 0.0, duration_sec, float(v_end_init/1000), step=0.01, format="%.2f")
+        v_s_init, v_e_init = get_speech_bounds(full_audio)
+        start_val = in_col1.number_input("시작 시간 (sec):", 0.0, duration_sec, float(v_s_init/1000), step=0.01, format="%.2f")
+        end_val = in_col2.number_input("종료 시간 (sec):", 0.0, duration_sec, float(v_e_init/1000), step=0.01, format="%.2f")
 
     fig_p, ax = plt.subplots(figsize=(12, 3))
     librosa.display.waveshow(y_full, sr=sr_f, ax=ax, color='skyblue', alpha=0.6)
-    ax.xaxis.set_major_locator(ticker.MultipleLocator(0.1)) # 0.1초 단위 눈금
-    ax.grid(axis='x', linestyle='--', alpha=0.3)
+    ax.xaxis.set_major_locator(ticker.MultipleLocator(0.1)); ax.grid(axis='x', linestyle='--', alpha=0.3)
     ax.axvline(x=start_val, color='red', linewidth=2); ax.axvline(x=end_val, color='red', linewidth=2)
-    ax.set_xlim(zoom_range)
-    st.pyplot(fig_p)
-    st.audio(audio_bytes)
+    ax.set_xlim(zoom_range); st.pyplot(fig_p); st.audio(audio_bytes)
         
     if st.button("📊 Step 3: 설정된 구간으로 분석하기", use_container_width=True):
         st.session_state.analysis_done = True
@@ -105,6 +99,8 @@ if st.session_state.analysis_done:
     try:
         audio_stream = io.BytesIO(st.session_state.audio_bytes)
         full_audio = AudioSegment.from_file(audio_stream)
+        
+        # [핵심] 사용자가 설정한 구간으로 크롭 및 고해상도 처리
         s_ms, e_ms = st.session_state.start_time * 1000, st.session_state.end_time * 1000
         cropped_audio = full_audio[s_ms:e_ms]
         l_s, l_e = get_speech_bounds(cropped_audio, buffer_ms=100)
@@ -151,8 +147,6 @@ if st.session_state.analysis_done:
             plt.tight_layout(); st.pyplot(fig_dur)
             diff = ((l_dur / n_dur) - 1) * 100
             st.info(f"💡 원어민 대비 발화 속도 편차: **{'+' if diff>=0 else ''}{int(diff)}%**")
-            with st.expander("📚 참고문헌"):
-                st.markdown("* Munro & Derwing (1995), ACTFL Proficiency Guidelines 2012.")
 
         with tab3:
             fig_w, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 4))
@@ -162,24 +156,29 @@ if st.session_state.analysis_done:
 
         with tab4:
             st.subheader("억양 멜로디 분석 (Pitch Contour)")
-            # [핵심 수정] 피치 복구를 위해 임계값 완화 (p_l: 0.25 -> 0.15, p_n: 0.05 -> 0.01)
-            f0_l, v_l, p_l = librosa.pyin(y_learner, fmin=75, fmax=400, hop_length=128)
-            f0_n, v_n, p_n = librosa.pyin(y_native, fmin=60, fmax=400, hop_length=128)
-            f0_l_f = np.where(v_l & (p_l > 0.15) & (f0_l > 80), f0_l, np.nan)
+            # [수정] 크롭된 y_learner를 사용하여 피치 분석 (임계값 및 해상도 최적화)
+            f0_l, v_l, p_l = librosa.pyin(y_learner, fmin=75, fmax=400, hop_length=64) # hop_length를 줄여 해상도 강화
+            f0_n, v_n, p_n = librosa.pyin(y_native, fmin=60, fmax=400, hop_length=64)
+            
+            f0_l_f = np.where(v_l & (p_l > 0.1) & (f0_l > 80), f0_l, np.nan)
             f0_n_f = np.where(v_n & (p_n > 0.01), f0_n, np.nan)
             
             fig_p, (ax_n1, ax_l1) = plt.subplots(1, 2, figsize=(15, 4), sharey=True)
-            ax_n1.plot(librosa.times_like(f0_n, hop_length=128), f0_n_f, color='lightgray', linewidth=3)
-            ax_l1.plot(librosa.times_like(f0_l, hop_length=128), f0_l_f, color='#1f77b4', linewidth=2.5)
-            ax_n1.set_title("Native Speaker"); ax_l1.set_title("Your Pitch")
-            st.pyplot(fig_p)
+            # times_like에 사용된 hop_length를 명시하여 시간 축 불일치 해결
+            t_n = librosa.times_like(f0_n, sr=sr_l, hop_length=64)
+            t_l = librosa.times_like(f0_l, sr=sr_l, hop_length=64)
+            
+            ax_n1.plot(t_n, f0_n_f, color='lightgray', linewidth=3)
+            ax_l1.plot(t_l, f0_l_f, color='#1f77b4', linewidth=2.5)
+            ax_n1.set_title("Native Speaker"); ax_l1.set_title("Your Pitch (Cropped Range Only)")
+            ax_n1.set_ylabel("Hz"); st.pyplot(fig_p)
             
             if st.checkbox("📈 패턴 대조(Normalized)"):
                 fn_norm = normalize_pitch(f0_n_f); fl_norm = normalize_pitch(f0_l_f)
                 fig_nm, axn = plt.subplots(figsize=(12, 4))
-                axn.plot(librosa.times_like(f0_n, hop_length=128), fn_norm, color='lightgray', label='Native')
-                axn.plot(librosa.times_like(f0_l, hop_length=128), fl_norm, color='#1f77b4', label='You')
-                axn.legend(); plt.tight_layout(); st.pyplot(fig_nm)
+                axn.plot(t_n, fn_norm, color='lightgray', label='Native', linewidth=2)
+                axn.plot(t_l, fl_norm, color='#1f77b4', label='You', linewidth=2)
+                axn.set_title("Intonation Pattern (Overlay)"); axn.legend(); st.pyplot(fig_nm)
 
     except Exception as e: st.error(f"오류: {e}")
     finally:
