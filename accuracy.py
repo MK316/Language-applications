@@ -10,9 +10,10 @@ from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 from difflib import SequenceMatcher
 from scipy.stats import pearsonr
-import re # 정규표현식 추가
+from scipy.signal import find_peaks
+from scipy.interpolate import interp1d
 
-# --- 1. 유틸리티 함수 ---
+# --- 1. 유틸리티 및 분석 함수 ---
 def get_speech_bounds(audio_segment, silence_thresh=-40, min_silence_len=100, buffer_ms=100):
     nonsilent_intervals = detect_nonsilent(audio_segment, min_silence_len=min_silence_len, silence_thresh=silence_thresh)
     if not nonsilent_intervals: return 0, len(audio_segment)
@@ -26,24 +27,14 @@ def normalize_pitch(f0):
     if sigma == 0 or np.isnan(sigma): return np.zeros_like(f0)
     return (f0 - mu) / sigma
 
-from scipy.signal import find_peaks
-from scipy.interpolate import interp1d
-
 def calculate_intonation_score(f0_n, f0_l):
-    """
-    1. 시간축 정규화 (Time-Alignment)
-    2. 피크 일치도 가중치 부여
-    3. 세분화된 패턴 유사도 산출
-    """
-    # 결측치 제거 및 데이터 유효성 검사
+    """시간축 정규화 및 피크 일치도 기반 세분화 점수 산출"""
     vec_n = f0_n[~np.isnan(f0_n)]
     vec_l = f0_l[~np.isnan(f0_l)]
     
-    if len(vec_n) < 10 or len(vec_l) < 10:
-        return 0
+    if len(vec_n) < 10 or len(vec_l) < 10: return 0
 
-    # --- [Step 1] 시간축 정규화 (Linear Time Normalization) ---
-    # 두 음성의 길이를 100포인트로 동일하게 리샘플링하여 시간축 정렬
+    # [Step 1] 시간축 정규화 (100 포인트로 통일)
     target_pts = 100
     x_n = np.linspace(0, 1, len(vec_n))
     x_l = np.linspace(0, 1, len(vec_l))
@@ -52,34 +43,24 @@ def calculate_intonation_score(f0_n, f0_l):
     norm_n = interp1d(x_n, vec_n, kind='linear')(x_new)
     norm_l = interp1d(x_l, vec_l, kind='linear')(x_new)
     
-    # --- [Step 2] 피치 값 정규화 (Z-score) ---
+    # [Step 2] 값 정규화 (Z-score)
     z_n = (norm_n - np.mean(norm_n)) / (np.std(norm_n) + 1e-6)
     z_l = (norm_l - np.mean(norm_l)) / (np.std(norm_l) + 1e-6)
 
-    # --- [Step 3] 피크(Peak) 감지 및 일치도 계산 ---
-    # 상대적 높이가 큰 피크들을 검출 (강세 위치)
+    # [Step 3] 피크(강세) 감지 (가중치 40%)
     peaks_n, _ = find_peaks(z_n, distance=10, prominence=0.5)
     peaks_l, _ = find_peaks(z_l, distance=10, prominence=0.5)
     
-    # 피크 개수 및 위치 유사도 계산 (가중치 40%)
     peak_score = 0
     if len(peaks_n) > 0:
-        match_count = 0
-        for p_n in peaks_n:
-            # 원어민 피크 위치 근처(±10%)에 학습자 피크가 있는지 확인
-            if any(abs(p_n - p_l) <= 10 for p_l in peaks_l):
-                match_count += 1
+        match_count = sum(1 for p_n in peaks_n if any(abs(p_n - p_l) <= 10 for p_l in peaks_l))
         peak_score = (match_count / len(peaks_n)) * 100
     
-    # --- [Step 4] 전체적인 상관관계 계산 (가중치 60%) ---
+    # [Step 4] 전체 패턴 상관관계 (가중치 60%)
     corr, _ = pearsonr(z_n, z_l)
     pattern_score = max(0, corr) * 100 if not np.isnan(corr) else 0
     
-    # --- [Step 5] 최종 점수 세분화 ---
-    # 패턴은 유사한데 피크 위치가 다르면 점수가 깎이고, 둘 다 일치하면 고득점
-    final_score = (pattern_score * 0.6) + (peak_score * 0.4)
-    
-    return int(final_score)
+    return int((pattern_score * 0.6) + (peak_score * 0.4))
 
 # --- 2. 설정 및 세션 초기화 ---
 st.set_page_config(page_title="AI 발음 분석기", layout="wide")
@@ -95,37 +76,29 @@ st.markdown("### 🎙️ AI 활용 발음 연습")
 selected_level = st.selectbox("Step 1: 학습 단계를 선택하세요:", list(sample_sentences.keys()))
 target_text = sample_sentences.get(selected_level)
 
+# --- 3. 녹음 및 구간 설정 ---
 col_box = st.columns([1, 2, 1])[1]
 with col_box:
     st.markdown(f"""<div style="border: 2px solid #1f77b4; border-radius: 12px; padding: 15px; background-color: #f8f9fb; text-align: center; margin-bottom: 20px;">
                 <h3 style="color: #1f77b4; margin: 0; font-weight: 700;">"{target_text}"</h3></div>""", unsafe_allow_html=True)
-    rec_btn = st.columns([1, 1, 1])[1]
-    with rec_btn:
-        audio = mic_recorder(start_prompt="🎤 녹음 시작", stop_prompt="🛑 녹음 완료", key="recorder")
+    audio = mic_recorder(start_prompt="🎤 녹음 시작", stop_prompt="🛑 녹음 완료", key="recorder")
 
-# --- 3. 녹음 후 구간 설정 ---
 if audio:
     st.divider()
     audio_bytes = audio['bytes']
-    audio_stream = io.BytesIO(audio_bytes)
-    full_audio = AudioSegment.from_file(audio_stream)
-    full_audio.export("temp_preview.wav", format="wav")
-    duration_sec = len(full_audio) / 1000.0
-    y_full, sr_f = librosa.load("temp_preview.wav", sr=22050)
+    y_full, sr_f = librosa.load(io.BytesIO(audio_bytes), sr=22050)
+    duration_sec = len(y_full) / sr_f
     
     st.subheader("✂️ 발화 구간 설정")
-    v_s, v_e = get_speech_bounds(full_audio)
-    trim_range = st.slider("분석할 목소리 구간을 선택하세요 (초):", 
-                           0.0, duration_sec, (float(v_s/1000), float(v_e/1000)), step=0.01)
+    v_s_idx, v_e_idx = get_speech_bounds(AudioSegment.from_file(io.BytesIO(audio_bytes)))
+    trim_range = st.slider("분석할 목소리 구간:", 0.0, duration_sec, (float(v_s_idx/1000), float(v_e_idx/1000)), step=0.01)
 
     fig_prev, ax = plt.subplots(figsize=(12, 3))
     librosa.display.waveshow(y_full, sr=sr_f, ax=ax, color='skyblue', alpha=0.6)
-    ax.axvline(x=trim_range[0], color='red', lw=2)
-    ax.axvline(x=trim_range[1], color='red', lw=2)
+    ax.axvline(x=trim_range[0], color='red', lw=2); ax.axvline(x=trim_range[1], color='red', lw=2)
     ax.set_xlim(max(0, trim_range[0] - 0.2), min(duration_sec, trim_range[1] + 0.2))
     st.pyplot(fig_prev)
-    st.audio(audio_bytes)
-        
+    
     if st.button("📊 설정된 구간으로 분석 시작하기", use_container_width=True):
         st.session_state.analysis_done = True
         st.session_state.final_audio_bytes = audio_bytes
@@ -135,97 +108,70 @@ if audio:
 # --- 4. 상세 분석 결과 ---
 if st.session_state.analysis_done:
     try:
-        audio_stream = io.BytesIO(st.session_state.final_audio_bytes)
-        full_audio = AudioSegment.from_file(audio_stream)
+        # 파일 경로 안전하게 관리
+        path_l = "temp_l.wav"; path_n_mp3 = "temp_n.mp3"; path_n_wav = "temp_n.wav"; path_stt = "temp_stt.wav"
+        
+        full_audio = AudioSegment.from_file(io.BytesIO(st.session_state.final_audio_bytes))
         s_ms, e_ms = st.session_state.final_start * 1000, st.session_state.final_end * 1000
         cropped = full_audio[s_ms:e_ms]
         
+        # 학습자 파일 저장
         l_s, l_e = get_speech_bounds(cropped, buffer_ms=50)
-        final_l = cropped[l_s:l_e]; final_l.export("temp_l.wav", format="wav")
-        full_audio.export("temp_stt.wav", format="wav")
+        final_l = cropped[l_s:l_e]; final_l.export(path_l, format="wav")
+        full_audio.export(path_stt, format="wav")
         
-        tts = gTTS(text=target_text, lang='en'); tts.save("temp_n.mp3")
-        native_raw = AudioSegment.from_file("temp_n.mp3")
-        n_s, n_e = get_speech_bounds(native_raw, silence_thresh=-35)
-        final_n = native_raw[n_s:n_e]; final_n.export("temp_n.wav", format="wav")
+        # 원어민 파일 생성 (오류 방지 로직)
+        tts = gTTS(text=target_text, lang='en')
+        tts.save(path_n_mp3)
+        if os.path.exists(path_n_mp3):
+            native_raw = AudioSegment.from_file(path_n_mp3)
+            n_s, n_e = get_speech_bounds(native_raw, silence_thresh=-35)
+            final_n = native_raw[n_s:n_e]; final_n.export(path_n_wav, format="wav")
+        else:
+            st.error("원어민 음성 생성 실패"); st.stop()
 
-        y_l, sr_curr = librosa.load("temp_l.wav", sr=22050); y_n, _ = librosa.load("temp_n.wav", sr=sr_curr)
-        l_dur, n_dur = len(final_l)/1000.0, len(final_n)/1000.0
+        y_l, sr_curr = librosa.load(path_l, sr=22050); y_n, _ = librosa.load(path_n_wav, sr=sr_curr)
 
         st.divider()
-        ac1, ac2 = st.columns(2)
-        with ac1: st.write("🎙️ **나의 발음**"); st.audio("temp_l.wav")
-        with ac2: st.write("🔊 **원어민 발음**"); st.audio("temp_n.wav")
+        c_a1, c_a2 = st.columns(2)
+        with c_a1: st.write("🎙️ **나의 발음**"); st.audio(path_l)
+        with c_a2: st.write("🔊 **원어민 발음**"); st.audio(path_n_wav)
 
-        tab1, tab2, tab3, tab4 = st.tabs(["🎯 AI 점수", "⏱️ 유창성 분석", "🔊 음파 대조", "📈 피치 분석"])
-
-        with tab1:
-            recognizer_obj = speech_rec.Recognizer()
-            with speech_rec.AudioFile("temp_stt.wav") as source:
-                audio_data = recognizer_obj.record(source)
-                try:
-                    text_res = recognizer_obj.recognize_google(audio_data, language='en-US')
-                    
-                    # [핵심 추가] 전처리 로직: 대소문자 통합 및 문장부호 제거
-                    def clean_string(s):
-                        return re.sub(r'[^\w\s]', '', s).lower().strip()
-                    
-                    clean_target = clean_string(target_text)
-                    clean_result = clean_string(text_res)
-                    
-                    # 전처리된 텍스트로 유사도 측정
-                    sim_val = SequenceMatcher(None, clean_target, clean_result).ratio()
-                    
-                    # 98점 이상이면 사실상 일치하므로 100점으로 보정
-                    final_acc_score = 100 if sim_val > 0.98 else int(sim_val * 100)
-                    
-                    c1, c2 = st.columns([1, 2])
-                    with c1: 
-                        st.markdown(f"""<div style="background-color: #e8f4f8; border-left: 5px solid #1f77b4; padding: 20px; border-radius: 8px; height: 120px;">
-                                    <b>정확도 점수</b><h1 style="color: #1f77b4; margin:0;">{final_acc_score}점</h1></div>""", unsafe_allow_html=True)
-                    with c2: 
-                        st.markdown(f"""<div style="background-color: #eafaf1; border-left: 5px solid #2ecc71; padding: 20px; border-radius: 8px; height: 120px;">
-                                    <b>인식 결과</b><p style="font-size: 1.2rem; color: #27ae60; margin:0;">{text_res}</p></div>""", unsafe_allow_html=True)
-                except: st.error("인식 실패")
-
-        with tab2:
-            fig_dur, (ax_l, ax_n) = plt.subplots(2, 1, figsize=(12, 5))
-            librosa.display.waveshow(y_l, sr=sr_curr, ax=ax_l, color='skyblue')
-            librosa.display.waveshow(y_n, sr=sr_curr, ax=ax_n, color='lightgray')
-            plt.tight_layout(); st.pyplot(fig_dur)
-            diff = ((l_dur / n_dur) - 1) * 100
-            st.info(f"💡 발화 속도 편차: **{'+' if diff>=0 else ''}{int(diff)}%**")
-
-        with tab3:
-            fig_w, (axw1, axw2) = plt.subplots(2, 1, figsize=(12, 6))
-            librosa.display.waveshow(y_l, sr=sr_curr, ax=axw1, color='skyblue')
-            librosa.display.waveshow(y_n, sr=sr_curr, ax=axw2, color='lightgray')
-            plt.tight_layout(); st.pyplot(fig_w)
+        tab1, tab2, tab3, tab4 = st.tabs(["🎯 AI 점수", "⏱️ 유창성", "🔊 음파 대조", "📈 피치 분석"])
 
         with tab4:
-            st.subheader("억양 멜로디 분석 (Pitch Contour)")
+            st.subheader("억양 멜로디 분석 (Time-Aligned)")
             f0_l, v_l, p_l = librosa.pyin(y_l, fmin=75, fmax=400, hop_length=64)
             f0_n, v_n, p_n = librosa.pyin(y_n, fmin=60, fmax=400, hop_length=64)
-            f0_l_f = np.where(v_l & (p_l > 0.1), f0_l, np.nan)
+            f0_l_f = np.where(v_l & (p_l > 0.15), f0_l, np.nan)
             f0_n_f = np.where(v_n & (p_n > 0.01), f0_n, np.nan)
             
-            t_l = librosa.times_like(f0_l, sr=sr_curr, hop_length=64); t_n = librosa.times_like(f0_n, sr=sr_curr, hop_length=64)
-            fig_p, (ax_l1, ax_n1) = plt.subplots(1, 2, figsize=(15, 4), sharey=True)
-            ax_l1.plot(t_l, f0_l_f, color='#1f77b4', ls=':', marker='o', markersize=2)
-            ax_n1.plot(t_n, f0_n_f, color='gray', ls=':', marker='o', markersize=2)
+            fig_p, (ax_l, ax_n) = plt.subplots(1, 2, figsize=(15, 4), sharey=True)
+            ax_l.plot(librosa.times_like(f0_l, sr=sr_curr, hop_length=64), f0_l_f, color='#1f77b4', ls=':', marker='o', markersize=2)
+            ax_n.plot(librosa.times_like(f0_n, sr=sr_curr, hop_length=64), f0_n_f, color='gray', ls=':', marker='o', markersize=2)
             st.pyplot(fig_p)
 
             st.write("---")
-            if st.button("🚀 정규화 분석 및 피드백 실행", use_container_width=True):
-                fl_norm = normalize_pitch(f0_l_f); fn_norm = normalize_pitch(f0_n_f)
-                score = calculate_intonation_score(fn_norm, fl_norm)
+            if st.button("🚀 정규화 및 피크 분석 실행", use_container_width=True):
+                # 세분화된 점수 계산
+                score = calculate_intonation_score(f0_n_f, f0_l_f)
+                
+                # 시각화를 위한 시간축 정렬 곡선 생성
+                vec_n = f0_n_f[~np.isnan(f0_n_f)]; vec_l = f0_l_f[~np.isnan(f0_l_f)]
+                norm_n = interp1d(np.linspace(0,1,len(vec_n)), normalize_pitch(vec_n))(np.linspace(0,1,100))
+                norm_l = interp1d(np.linspace(0,1,len(vec_l)), normalize_pitch(vec_l))(np.linspace(0,1,100))
+                
                 fig_ov, axo = plt.subplots(figsize=(12, 4))
-                axo.plot(t_n[:len(fn_norm)], fn_norm, color='lightgray', lw=3, label='Native', alpha=0.7)
-                axo.plot(t_l[:len(fl_norm)], fl_norm, color='#1f77b4', lw=2, label='Learner')
-                axo.set_title("Melody Pattern Overlay"); axo.legend(); st.pyplot(fig_ov)
-                st.metric("억양 유사도 점수", f"{score}점")
+                axo.plot(np.linspace(0,1,100), norm_n, color='lightgray', lw=3, label='Native', alpha=0.7)
+                axo.plot(np.linspace(0,1,100), norm_l, color='#1f77b4', lw=2, label='Learner')
+                axo.set_title("Time-Aligned Melody Pattern"); axo.legend(); st.pyplot(fig_ov)
+                
+                st.metric("억양 유사도 점수 (피크 가중치 적용)", f"{score}점")
+                if score >= 75: st.success("🌟 강세 위치와 멜로디가 매우 자연스럽습니다!")
+                elif score >= 45: st.info("👍 흐름은 비슷합니다. 주요 단어의 강세(Peak)를 더 명확히 해보세요.")
+                else: st.warning("🧐 억양의 높낮이 변화가 원어민과 많이 다릅니다. 노래하듯 리듬을 타보세요.")
 
     except Exception as e: st.error(f"분석 중 오류 발생: {e}")
     finally:
-        for f in ["temp_n.mp3", "temp_n.wav", "temp_l.wav", "temp_stt.wav", "temp_preview.wav"]:
+        for f in [path_l, path_n_mp3, path_n_wav, path_stt, "temp_preview.wav"]:
             if os.path.exists(f): os.remove(f)
