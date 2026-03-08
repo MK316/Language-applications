@@ -32,11 +32,23 @@ def get_rms_envelope(y, hop_length=256):
     rms = librosa.feature.rms(y=y, hop_length=hop_length)[0]
     return np.convolve(rms, np.ones(5)/5, mode='same')
 
-def safe_trim(audio_segment):
-    bounds = detect_nonsilent(audio_segment, min_silence_len=100, silence_thresh=-50)
-    if not bounds: return audio_segment
+def safe_trim_v2(audio_segment):
+    """원어민 음성이 잘리는 것을 방지하기 위해 더 완화된 임계값과 여유 공간(Padding) 적용"""
+    # -55dB로 더 민감하게 음성을 감지하고, 최소 무음 길이를 150ms로 늘림
+    bounds = detect_nonsilent(audio_segment, min_silence_len=150, silence_thresh=-55)
+    
+    if not bounds: 
+        return audio_segment
+    
     start, end = bounds[0]
-    return audio_segment[start:end] if (end - start) > 200 else audio_segment
+    # 앞뒤로 100ms(0.1초)씩 여유를 주어 음절이 잘리는 것 방지
+    pad = 100 
+    start = max(0, start - pad)
+    end = min(len(audio_segment), end + pad)
+    
+    trimmed = audio_segment[start:end]
+    # 결과물이 400ms(0.4초)보다 짧으면 트리밍 취소 (단어 발화의 최소 시간 보장)
+    return trimmed if len(trimmed) > 400 else audio_segment
 
 def detect_syllable_stress(y, sr):
     env = get_rms_envelope(y)
@@ -72,9 +84,7 @@ audio = mic_recorder(start_prompt="🎤 녹음 시작", stop_prompt="🛑 완료
 
 if audio:
     if audio['id'] != st.session_state.last_audio_id:
-        st.session_state.last_audio_id = audio['id']
-        st.session_state.analysis_done = False
-        st.session_state.final_y_l = None
+        st.session_state.last_audio_id, st.session_state.analysis_done, st.session_state.final_y_l = audio['id'], False, None
 
     l_raw = AudioSegment.from_file(io.BytesIO(audio['bytes']))
     y_full = np.array(l_raw.get_array_of_samples(), dtype=np.float32) / (2**15)
@@ -90,7 +100,6 @@ if audio:
     librosa.display.waveshow(y_full, sr=sr_f, ax=axp, color='skyblue', alpha=0.5)
     axp.axvline(x=trim_range[0], color='red', lw=2, ls='--'); axp.axvline(x=trim_range[1], color='red', lw=2, ls='--')
     axp.set_xlim(0, len(y_full)/sr_f); axp.set_yticks([]); st.pyplot(fig_p)
-    st.audio(l_raw[int(trim_range[0]*1000):int(trim_range[1]*1000)].export(io.BytesIO(), format="wav").getvalue())
     
     c1, c2 = st.columns(2)
     with c1:
@@ -110,9 +119,11 @@ if st.session_state.analysis_done and st.session_state.final_y_l is not None:
     with st.spinner("AI 분석 중..."):
         try:
             tts = gTTS(text=target_word, lang='en'); n_mp3 = io.BytesIO(); tts.write_to_fp(n_mp3); n_mp3.seek(0)
-            n_seg = safe_trim(AudioSegment.from_file(n_mp3))
+            # 강화된 트리밍 로직 적용
+            n_seg = safe_trim_v2(AudioSegment.from_file(n_mp3))
             y_n = np.array(n_seg.get_array_of_samples(), dtype=np.float32) / (2**15)
             if n_seg.channels > 1: y_n = y_n.reshape((-1, n_seg.channels)).mean(axis=1)
+            
             y_l, y_n = librosa.util.normalize(y_l), librosa.util.normalize(y_n)
             p_idx_l, env_l = detect_syllable_stress(y_l, sr)
             p_idx_n, env_n = detect_syllable_stress(y_n, sr)
@@ -122,7 +133,6 @@ if st.session_state.analysis_done and st.session_state.final_y_l is not None:
             col1.metric("종합 점수", f"{score}점"); col2.metric("강세 비중", f"{dur_l:.1f}%", f"{dur_l-dur_n:+.1f}%")
 
             # 결과 시각화
-            # 
             fig_res, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6)); mt = max(len(y_l), len(y_n)) / sr
             for ax, y, env, p, t, col in [(ax1, y_l, env_l, p_idx_l, "My Rhythm", "skyblue"), (ax2, y_n, env_n, p_idx_n, "Native Standard", "lightgray")]:
                 times = np.linspace(0, len(y)/sr, len(env))
