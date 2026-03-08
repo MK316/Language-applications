@@ -23,7 +23,6 @@ def normalize_pitch(f0):
     sigma = np.nanstd(f0)
     return (f0 - mu) / sigma if sigma != 0 and not np.isnan(sigma) else f0 - mu
 
-# --- 위젯 연동 콜백 ---
 def update_slider():
     st.session_state.zoom_range = (st.session_state.start_val, st.session_state.end_val)
 
@@ -38,7 +37,6 @@ if 'analysis_done' not in st.session_state: st.session_state.analysis_done = Fal
 if 'start_val' not in st.session_state: st.session_state.start_val = 0.0
 if 'end_val' not in st.session_state: st.session_state.end_val = 1.0
 
-# [샘플 문장 리스트]
 sample_sentences = {
     "Level 01: (인사/기초)": "I am on my way.",
     "Level 02: (일상/기초)": "Nice room you have.",
@@ -83,7 +81,7 @@ if audio:
     st.subheader("✂️ 발화 구간 및 줌 설정")
     c_zoom, c_input = st.columns([1, 1])
     with c_zoom:
-        st.slider("🔍 파형 확대 범위 (Zoom):", 0.0, duration_sec, key="zoom_range", on_change=update_num_input, step=0.01)
+        st.slider("🔍 파형 확대 범위 (Zoom Window):", 0.0, duration_sec, key="zoom_range", on_change=update_num_input, step=0.01)
     with c_input:
         in_col1, in_col2 = st.columns(2)
         in_col1.number_input("시작 (sec):", 0.0, duration_sec, key="start_val", on_change=update_slider, step=0.01, format="%.2f")
@@ -91,10 +89,9 @@ if audio:
 
     fig_p, ax = plt.subplots(figsize=(12, 3.5))
     librosa.display.waveshow(y_full, sr=sr_f, ax=ax, color='skyblue', alpha=0.6)
-    
-    zoom_width = st.session_state.zoom_range[1] - st.session_state.zoom_range[0]
-    tick_spacing = 0.5 if zoom_width > 3 else 0.1 if zoom_width > 1 else 0.05
-    ax.xaxis.set_major_locator(ticker.MultipleLocator(tick_spacing))
+    zoom_w = st.session_state.zoom_range[1] - st.session_state.zoom_range[0]
+    t_spacing = 0.5 if zoom_w > 3 else 0.1 if zoom_w > 1 else 0.05
+    ax.xaxis.set_major_locator(ticker.MultipleLocator(t_spacing))
     ax.xaxis.set_major_formatter(ticker.FormatStrFormatter('%.2f'))
     ax.grid(axis='x', linestyle='--', alpha=0.3)
     ax.axvline(x=st.session_state.start_val, color='red', linewidth=2.5)
@@ -130,14 +127,14 @@ if st.session_state.analysis_done:
         y_native, _ = librosa.load("temp_native.wav", sr=sr_l)
         l_dur, n_dur = len(final_learner)/1000.0, len(final_native)/1000.0
 
+        # --- [변경] 공통 오디오 플레이어: 학습자 우선 배치 ---
         st.divider()
         ac1, ac2 = st.columns(2)
-        with ac1: st.write("🎙️ **나의 발음**"); st.audio("temp_learner.wav")
-        with ac2: st.write("🔊 **원어민 발음**"); st.audio("temp_native.wav")
+        with ac1: st.write("🎙️ **나의 발음 (My Voice)**"); st.audio("temp_learner.wav")
+        with ac2: st.write("🔊 **원어민 발음 (Native)**"); st.audio("temp_native.wav")
 
         tab1, tab2, tab3, tab4 = st.tabs(["🎯 AI 점수", "⏱️ 유창성 분석", "🔊 음파 대조", "📈 피치 분석"])
 
-        # [Tab 1~3 로직 동일 - 생략]
         with tab1:
             r = sr.Recognizer()
             with sr.AudioFile("temp_stt.wav") as source:
@@ -149,50 +146,55 @@ if st.session_state.analysis_done:
                     with c1: st.markdown(f"""<div style="background-color: #e8f4f8; border-left: 5px solid #1f77b4; padding: 20px; border-radius: 8px; height: 120px;"><b>정확도</b><h1 style="color: #1f77b4;">{int(score*100)}점</h1></div>""", unsafe_allow_html=True)
                     with c2: st.markdown(f"""<div style="background-color: #eafaf1; border-left: 5px solid #2ecc71; padding: 20px; border-radius: 8px; height: 120px;"><b>인식 결과</b><p style="font-size: 1.2rem; color: #27ae60;">{transcript}</p></div>""", unsafe_allow_html=True)
                 except: st.error("인식 실패")
-        
+
         with tab2:
-            fig_dur, (ax_n, ax_l) = plt.subplots(2, 1, figsize=(12, 5))
-            librosa.display.waveshow(y_native, sr=sr_l, ax=ax_n, color='lightgray', alpha=0.5)
-            ax_n.axvline(x=0, color='red', linestyle='--'); ax_n.axvline(x=n_dur, color='red', linestyle='--')
+            st.subheader("순수 발화 구간 비교 (Learner First)")
+            # --- [변경] 파형 그래프 순서: 학습자 상단 ---
+            fig_dur, (ax_l, ax_n) = plt.subplots(2, 1, figsize=(12, 5))
             librosa.display.waveshow(y_learner, sr=sr_l, ax=ax_l, color='skyblue', alpha=0.7)
             ax_l.axvline(x=0, color='blue', linestyle='--'); ax_l.axvline(x=l_dur, color='blue', linestyle='--')
+            ax_l.set_title(f"Your Pitch (Pure: {l_dur:.2f}s)")
+
+            librosa.display.waveshow(y_native, sr=sr_l, ax=ax_n, color='lightgray', alpha=0.5)
+            ax_n.axvline(x=0, color='red', linestyle='--'); ax_n.axvline(x=n_dur, color='red', linestyle='--')
+            ax_n.set_title(f"Native Speaker (Pure: {n_dur:.2f}s)")
+            
             plt.tight_layout(); st.pyplot(fig_dur)
             diff = ((l_dur / n_dur) - 1) * 100
             st.info(f"💡 원어민 대비 발화 속도 편차: **{'+' if diff>=0 else ''}{int(diff)}%**")
 
         with tab3:
+            # --- [변경] 음파 대조 순서: 학습자 상단 ---
             fig_w, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 4))
-            librosa.display.waveshow(y_native, sr=sr_l, ax=ax1, color='lightgray')
-            librosa.display.waveshow(y_learner, sr=sr_l, ax=ax2, color='skyblue')
+            librosa.display.waveshow(y_learner, sr=sr_l, ax=ax1, color='skyblue')
+            librosa.display.waveshow(y_native, sr=sr_l, ax=ax2, color='lightgray')
+            ax1.set_title("Your Waveform"); ax2.set_title("Native Waveform")
             plt.tight_layout(); st.pyplot(fig_w)
 
         with tab4:
-            st.subheader("억양 멜로디 분석 (점선 스타일 적용)")
+            st.subheader("억양 멜로디 분석 (나의 피치 우선)")
             f0_l, v_l, p_l = librosa.pyin(y_learner, fmin=75, fmax=400, hop_length=64)
             f0_n, v_n, p_n = librosa.pyin(y_native, fmin=60, fmax=400, hop_length=64)
             f0_l_f = np.where(v_l & (p_l > 0.15) & (f0_l > 80), f0_l, np.nan)
             f0_n_f = np.where(v_n & (p_n > 0.01), f0_n, np.nan)
             
-            # [수정] 점선 스타일(linestyle=':') 및 데이터 포인트(marker) 적용
-            fig_p, (ax_n1, ax_l1) = plt.subplots(1, 2, figsize=(15, 4), sharey=True)
-            t_n = librosa.times_like(f0_n, sr=sr_l, hop_length=64)
+            # --- [변경] 피치 그래프 순서: 학습자 좌측 ---
+            fig_p, (ax_l1, ax_n1) = plt.subplots(1, 2, figsize=(15, 4), sharey=True)
             t_l = librosa.times_like(f0_l, sr=sr_l, hop_length=64)
+            t_n = librosa.times_like(f0_n, sr=sr_l, hop_length=64)
             
-            # 원어민: 굵은 회색 점선
-            ax_n1.plot(t_n, f0_n_f, color='lightgray', linestyle=':', linewidth=3, marker='o', markersize=2, alpha=0.8)
-            # 학습자: 굵은 파란색 점선
             ax_l1.plot(t_l, f0_l_f, color='#1f77b4', linestyle=':', linewidth=2.5, marker='o', markersize=2)
-            
-            ax_n1.set_title("Native Speaker (Dotted)"); ax_l1.set_title("Your Pitch (Dotted)")
+            ax_n1.plot(t_n, f0_n_f, color='lightgray', linestyle=':', linewidth=3, marker='o', markersize=2, alpha=0.8)
+            ax_l1.set_title("Your Pitch (Dotted)"); ax_n1.set_title("Native Speaker (Dotted)")
             st.pyplot(fig_p)
 
             if st.checkbox("📈 패턴 대조(Normalized Overlay)"):
                 fn_norm = normalize_pitch(f0_n_f); fl_norm = normalize_pitch(f0_l_f)
                 fig_nm, axn = plt.subplots(figsize=(12, 4))
-                # 오버레이 그래프에서도 점선 스타일 유지
+                # 오버레이는 학습자 곡선이 위로 올라오도록 순서 조정
                 axn.plot(t_n, fn_norm, color='lightgray', linestyle=':', linewidth=3, label='Native', alpha=0.7)
                 axn.plot(t_l, fl_norm, color='#1f77b4', linestyle=':', linewidth=3, label='You')
-                axn.set_title("Intonation Pattern Comparison (Dotted Pattern)"); axn.legend(); st.pyplot(fig_nm)
+                axn.set_title("Intonation Pattern Comparison"); axn.legend(); st.pyplot(fig_nm)
 
     except Exception as e: st.error(f"오류: {e}")
     finally:
