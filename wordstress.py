@@ -47,7 +47,7 @@ def calculate_normalized_score(env_n, env_l):
     return int(max(0, shape_corr) * 100), norm_n, norm_l
 
 # --- [3] 메인 UI ---
-st.title("🎙️ Word Stress Master")
+st.title("🎙️ Word Practice")
 word_db = {"Photograph": "photograph", "Photographer": "photographer", "Education": "education"}
 target_word = word_db[st.selectbox("학습할 단어 선택:", list(word_db.keys()))]
 
