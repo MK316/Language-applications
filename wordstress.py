@@ -29,13 +29,13 @@ if 'final_y_l' not in st.session_state: st.session_state.final_y_l = None
 
 # --- [2] 분석 엔진: 피크 탐지 및 스무딩 ---
 def get_smoothed_envelope(y, sr):
-    # RMS 에너지를 구한 뒤 이동평균으로 미세 떨림 제거 (언어적 포형 추출)
+    # RMS 에너지를 구한 뒤 이동평균으로 미세 떨림 제거 (조음 노이즈 평탄화)
     rms = librosa.feature.rms(y=y, hop_length=256)[0]
     smoothed = np.convolve(rms, np.ones(10)/10, mode='same')
     return smoothed
 
 def analyze_rhythm_peaks(env):
-    # 음절 봉우리 탐지: 최소 높이 15% 기준, 음절 간 거리 확보
+    # 음절 봉우리 탐지: 최소 높이 15% 기준
     peaks, _ = find_peaks(env, height=np.max(env)*0.15, distance=5)
     primary_stress_idx = np.argmax(env) if len(env) > 0 else 0
     return peaks, primary_stress_idx
@@ -43,20 +43,19 @@ def analyze_rhythm_peaks(env):
 def calculate_pedagogical_score(env_n, env_l):
     if len(env_n) < 2 or len(env_l) < 2: return 0, np.zeros(100), np.zeros(100), [], []
     
-    # 시간 정규화 (패턴 비교용)
+    # 시간 정규화 (0-100% 타임라인)
     standard_x = np.linspace(0, 1, 100)
     f_n = interp1d(np.linspace(0, 1, len(env_n)), env_n, fill_value="extrapolate")
     f_l = interp1d(np.linspace(0, 1, len(env_l)), env_l, fill_value="extrapolate")
     n_norm, l_norm = f_n(standard_x), f_l(standard_x)
     
-    # 양측 피크 추출
+    # 양측 음절 피크 추출
     peaks_n, stress_n = analyze_rhythm_peaks(n_norm)
     peaks_l, stress_l = analyze_rhythm_peaks(l_norm)
     
-    # 교육적 점수 산정 (강세 위치 50% + 패턴 상관도 50%)
+    # 교육적 점수 산정 (강세 위치 50% + 리듬 패턴 50%)
     stress_dist = abs(stress_n - stress_l) / 100
     stress_score = max(0, 1 - stress_dist) * 50
-    
     pattern_corr = np.corrcoef(n_norm, l_norm)[0, 1]
     pattern_score = max(0, pattern_corr) * 50
     
@@ -84,7 +83,7 @@ if audio:
     if audio['id'] != st.session_state.last_audio_id:
         st.session_state.last_audio_id, st.session_state.analysis_done, st.session_state.final_y_l = audio['id'], False, None
 
-    # pydub으로 로드하여 LibsndfileError 방지 및 정확한 샘플링 레이트 확보
+    # 오디오 로딩 및 물리적 시간 보존
     l_raw = AudioSegment.from_file(io.BytesIO(audio['bytes']))
     sr_f = l_raw.frame_rate
     y_full = np.array(l_raw.get_array_of_samples(), dtype=np.float32) / (2**15)
@@ -92,7 +91,7 @@ if audio:
         y_full = y_full.reshape((-1, l_raw.channels)).mean(axis=1)
     
     duration_sec = len(y_full) / sr_f
-    st.markdown(f"#### ✂️ 분석 구간 설정 (전체 길이: {duration_sec:.2f}s)")
+    st.markdown(f"#### ✂️ 분석 구간 설정 (전체 길이: {duration_sec:.2f}초)")
     
     auto_b = detect_nonsilent(l_raw, min_silence_len=100, silence_thresh=-45)
     s_init, e_init = (auto_b[0][0]/1000, auto_b[0][1]/1000) if auto_b else (0.0, duration_sec)
@@ -134,7 +133,7 @@ if st.session_state.analysis_done and st.session_state.final_y_l is not None:
         if n_seg.channels > 1: y_n = y_n.reshape((-1, n_seg.channels)).mean(axis=1)
         sr_n = n_seg.frame_rate
         
-        # 포형 스무딩 및 교육적 점수 계산
+        # 스무딩 및 교육적 점수 계산
         env_l = get_smoothed_envelope(librosa.util.normalize(y_l), sr)
         env_n = get_smoothed_envelope(librosa.util.normalize(y_n), sr_n)
         score, norm_n, norm_l, peaks_l, peaks_n = calculate_pedagogical_score(env_n, env_l)
@@ -142,38 +141,27 @@ if st.session_state.analysis_done and st.session_state.final_y_l is not None:
         st.divider()
         st.metric("종합 리듬 점수", f"{score}점")
         
-        # 음절 수 대조 피드백
         if len(peaks_n) != len(peaks_l):
             st.warning(f"⚠️ 음절 수가 다릅니다. 원어민: {len(peaks_n)}음절 / 나: {len(peaks_l)}음절")
         else:
             st.success(f"✅ 원어민과 동일한 {len(peaks_n)}음절 리듬 패턴을 유지하고 있습니다.")
 
-        # 오디오 대조
-        a1, a2 = st.columns(2)
-        with a1: st.write("🙋 나의 발음"); st.audio(st.session_state.final_audio_l.export(io.BytesIO(), format="wav").getvalue())
-        with a2: st.write("🎙️ 원어민 표준"); st.audio(n_seg.export(io.BytesIO(), format="wav").getvalue())
-
         # 시간 정규화 오버레이 (양측 피크 분석)
         st.write("### 🔄 리듬 패턴 및 음절 위치 대조")
-        [Image of audio waveform amplitude envelope and stress peaks]
         fig_norm, axn = plt.subplots(figsize=(10, 4))
         x_range = np.linspace(0, 100, 100)
         
-        # 원어민 가이드: 회색 영역 + 회색 점(피크)
+        # 원어민: 회색 영역 + 회색 점
         axn.fill_between(x_range, 0, norm_n, color='gray', alpha=0.15, label='Native Guide')
         axn.scatter(x_range[peaks_n], norm_n[peaks_n], color='gray', s=60, edgecolors='white', zorder=4, label='Native Syllables')
         
-        # 학습자 리듬: 빨간 선 + 빨간 점(피크)
+        # 학습자: 빨간 선 + 빨간 점
         axn.plot(x_range, norm_l, color='#ff4b4b', lw=2.5, label='My Rhythm (Smoothed)')
         axn.scatter(x_range[peaks_l], norm_l[peaks_l], color='red', s=60, zorder=5, label='My Syllables')
-        
-        axn.set_title(f"Rhythm Pattern Matching (Native {len(peaks_n)} vs Me {len(peaks_l)})")
-        axn.set_xlabel("Progression (%)"); axn.legend()
-        st.pyplot(fig_norm)
+        axn.legend(); st.pyplot(fig_norm)
 
         # 절대 시간 비교
         st.write("### 📏 절대 시간 기반 에너지 프로필")
-        [Image of energy envelope comparison for word stress]
         fig_abs, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6))
         mt = max(len(y_l)/sr, len(y_n)/sr_n)
         for ax, y, env, s, t, col in [(ax1, y_l, env_l, sr, "My Rhythm", "skyblue"), (ax2, y_n, env_n, sr_n, "Native Standard", "lightgray")]:
