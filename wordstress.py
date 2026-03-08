@@ -60,14 +60,18 @@ if audio:
     if audio['id'] != st.session_state.last_audio_id:
         st.session_state.last_audio_id, st.session_state.analysis_done, st.session_state.final_y_l = audio['id'], False, None
 
-    # 원본 샘플링 레이트 유지 (sr=None) - 시간축 왜곡 방지 핵심
-    audio_bio = io.BytesIO(audio['bytes'])
-    y_full, sr_f = librosa.load(audio_bio, sr=None) 
+    # [에러 해결 핵심] LibsndfileError를 피하기 위해 pydub으로 오디오 로드 후 넘파이 변환
+    l_raw = AudioSegment.from_file(io.BytesIO(audio['bytes']))
+    sr_f = l_raw.frame_rate
+    y_full = np.array(l_raw.get_array_of_samples(), dtype=np.float32) / (2**15)
+    if l_raw.channels > 1:
+        y_full = y_full.reshape((-1, l_raw.channels)).mean(axis=1)
+    
+    # 실제 물리적 시간 계산
     actual_duration = len(y_full) / sr_f
     
     st.markdown(f"#### ✂️ 분석 구간 설정 (실제 물리적 길이: {actual_duration:.2f}s)")
     
-    l_raw = AudioSegment.from_file(io.BytesIO(audio['bytes']))
     auto_b = detect_nonsilent(l_raw, min_silence_len=100, silence_thresh=-45)
     as_ms, ae_ms = auto_b[0] if auto_b else (0, len(l_raw))
     trim_range = st.slider("구간 조절:", 0.0, float(actual_duration), (float(as_ms/1000), float(ae_ms/1000)), step=0.01)
@@ -79,17 +83,25 @@ if audio:
     axp.set_xlim(0, actual_duration)
     st.pyplot(fig_p)
 
+    st.write("🔈 **선택된 구간 미리듣기:**")
+    trimmed_audio = l_raw[int(trim_range[0]*1000):int(trim_range[1]*1000)]
+    st.audio(trimmed_audio.export(io.BytesIO(), format="wav").getvalue())
+
     if st.button("📊 정밀 분석 실행", type="primary"):
         st.session_state.analysis_done = True
         st.session_state.final_y_l = y_full[int(trim_range[0]*sr_f):int(trim_range[1]*sr_f)]
         st.session_state.current_sr = sr_f
-        st.session_state.final_audio_l = l_raw[int(trim_range[0]*1000):int(trim_range[1]*1000)]
+        st.session_state.final_audio_l = trimmed_audio
 
 if st.session_state.get('analysis_done'):
     y_l, sr = st.session_state.final_y_l, st.session_state.current_sr
     
-    tts = gTTS(text=target_word, lang='en'); n_mp3 = io.BytesIO(); tts.write_to_fp(n_mp3); n_mp3.seek(0)
-    y_n, sr_n = librosa.load(n_mp3, sr=None)
+    # 원어민 데이터 처리 (pydub 활용으로 에러 방지)
+    tts = gTTS(text=target_word, lang='en'); n_mp3_io = io.BytesIO(); tts.write_to_fp(n_mp3_io); n_mp3_io.seek(0)
+    n_seg = AudioSegment.from_file(n_mp3_io)
+    sr_n = n_seg.frame_rate
+    y_n = np.array(n_seg.get_array_of_samples(), dtype=np.float32) / (2**15)
+    if n_seg.channels > 1: y_n = y_n.reshape((-1, n_seg.channels)).mean(axis=1)
     
     p_idx_l, env_l = detect_syllable_stress(librosa.util.normalize(y_l), sr)
     p_idx_n, env_n = detect_syllable_stress(librosa.util.normalize(y_n), sr_n)
@@ -100,9 +112,9 @@ if st.session_state.get('analysis_done'):
 
     a_col1, a_col2 = st.columns(2)
     with a_col1: st.write("🙋 나의 발음"); st.audio(st.session_state.final_audio_l.export(io.BytesIO(), format="wav").getvalue())
-    with a_col2: st.write("🎙️ 원어민 표준"); st.audio(n_mp3.getvalue())
+    with a_col2: st.write("🎙️ 원어민 표준"); st.audio(n_seg.export(io.BytesIO(), format="wav").getvalue())
 
-    st.write("### 📏 절대 시간 기반 비교 (Actual Time Scale)")
+    st.write("### 📏 절대 시간 기반 비교 (Praat 규격 일치)")
     fig_abs, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 5))
     mt = max(len(y_l)/sr, len(y_n)/sr_n)
     
@@ -114,7 +126,6 @@ if st.session_state.get('analysis_done'):
         ax.axvline(x=ts[p], color='red', lw=3)
         ax.set_title(f"{t} (Real Duration: {len(y)/s:.2f}s)")
         ax.set_xlim(0, mt)
-    
     plt.tight_layout(); st.pyplot(fig_abs)
 
     st.write("### 🔄 시간 정규화 리듬 패턴 대조")
@@ -125,6 +136,6 @@ if st.session_state.get('analysis_done'):
     axn.legend(); st.pyplot(fig_norm)
 
 if st.button("🔄 리셋"):
-    st.session_state.reset_key += 1
+    st.session_key += 1
     st.session_state.last_audio_id, st.session_state.analysis_done, st.session_state.final_y_l = None, False, None
     st.rerun()
