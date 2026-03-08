@@ -26,42 +26,60 @@ def normalize_pitch(f0):
     if sigma == 0 or np.isnan(sigma): return np.zeros_like(f0)
     return (f0 - mu) / sigma
 
+from scipy.signal import find_peaks
+from scipy.interpolate import interp1d
+
 def calculate_intonation_score(f0_n, f0_l):
     """
-    시간 축 불일치 문제를 해결하기 위해 두 곡선의 길이를 
-    동일한 구간으로 리샘플링하여 비교합니다.
+    1. 시간축 정규화 (Time-Alignment)
+    2. 피크 일치도 가중치 부여
+    3. 세분화된 패턴 유사도 산출
     """
-    # 결측치(NaN)를 0으로 채움
-    vec_n = np.nan_to_num(f0_n)
-    vec_l = np.nan_to_num(f0_l)
-    
-    # 두 벡터 중 유효한 피치 데이터가 있는 구간만 추출
-    vec_n = vec_n[np.where(vec_n != 0)]
-    vec_l = vec_l[np.where(vec_l != 0)]
+    # 결측치 제거 및 데이터 유효성 검사
+    vec_n = f0_n[~np.isnan(f0_n)]
+    vec_l = f0_l[~np.isnan(f0_l)]
     
     if len(vec_n) < 10 or len(vec_l) < 10:
         return 0
 
-    # [핵심] 두 곡선의 길이를 강제로 맞춤 (Interpolation)
-    from scipy.interpolate import interp1d
-    x_new = np.linspace(0, 1, 100) # 100개 포인트로 표준화
+    # --- [Step 1] 시간축 정규화 (Linear Time Normalization) ---
+    # 두 음성의 길이를 100포인트로 동일하게 리샘플링하여 시간축 정렬
+    target_pts = 100
+    x_n = np.linspace(0, 1, len(vec_n))
+    x_l = np.linspace(0, 1, len(vec_l))
+    x_new = np.linspace(0, 1, target_pts)
     
-    f_n = interp1d(np.linspace(0, 1, len(vec_n)), vec_n, kind='linear')
-    f_l = interp1d(np.linspace(0, 1, len(vec_l)), vec_l, kind='linear')
+    norm_n = interp1d(x_n, vec_n, kind='linear')(x_new)
+    norm_l = interp1d(x_l, vec_l, kind='linear')(x_new)
     
-    norm_vec_n = f_n(x_new)
-    norm_vec_l = f_l(x_new)
+    # --- [Step 2] 피치 값 정규화 (Z-score) ---
+    z_n = (norm_n - np.mean(norm_n)) / (np.std(norm_n) + 1e-6)
+    z_l = (norm_l - np.mean(norm_l)) / (np.std(norm_l) + 1e-6)
+
+    # --- [Step 3] 피크(Peak) 감지 및 일치도 계산 ---
+    # 상대적 높이가 큰 피크들을 검출 (강세 위치)
+    peaks_n, _ = find_peaks(z_n, distance=10, prominence=0.5)
+    peaks_l, _ = find_peaks(z_l, distance=10, prominence=0.5)
     
-    # 상관계수 계산
-    with np.errstate(divide='ignore', invalid='ignore'):
-        corr, _ = pearsonr(norm_vec_n, norm_vec_l)
-        
-    # 단순히 0 이하를 0점으로 처리하기보다, 절대적인 패턴 유사도를 위해 보정
-    if np.isnan(corr): return 0
+    # 피크 개수 및 위치 유사도 계산 (가중치 40%)
+    peak_score = 0
+    if len(peaks_n) > 0:
+        match_count = 0
+        for p_n in peaks_n:
+            # 원어민 피크 위치 근처(±10%)에 학습자 피크가 있는지 확인
+            if any(abs(p_n - p_l) <= 10 for p_l in peaks_l):
+                match_count += 1
+        peak_score = (match_count / len(peaks_n)) * 100
     
-    # 억양의 흐름(올라가고 내려감)이 비슷하면 점수를 부여
-    score = int(max(0, corr) * 100)
-    return score
+    # --- [Step 4] 전체적인 상관관계 계산 (가중치 60%) ---
+    corr, _ = pearsonr(z_n, z_l)
+    pattern_score = max(0, corr) * 100 if not np.isnan(corr) else 0
+    
+    # --- [Step 5] 최종 점수 세분화 ---
+    # 패턴은 유사한데 피크 위치가 다르면 점수가 깎이고, 둘 다 일치하면 고득점
+    final_score = (pattern_score * 0.6) + (peak_score * 0.4)
+    
+    return int(final_score)
 
 # --- 2. 설정 및 세션 초기화 ---
 st.set_page_config(page_title="AI 발음 분석기", layout="wide")
