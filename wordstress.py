@@ -60,22 +60,18 @@ if audio:
     if audio['id'] != st.session_state.last_audio_id:
         st.session_state.last_audio_id, st.session_state.analysis_done, st.session_state.final_y_l = audio['id'], False, None
 
-    # [핵심 수정] librosa.load를 사용하여 원본 샘플링 레이트(sr=None)를 강제로 유지
-    # 이렇게 하면 0.8초든 어떤 길이든 파일에 기록된 실제 물리적 시간 그대로 읽어옵니다.
+    # 원본 샘플링 레이트 유지 (sr=None) - 시간축 왜곡 방지 핵심
     audio_bio = io.BytesIO(audio['bytes'])
     y_full, sr_f = librosa.load(audio_bio, sr=None) 
-    
     actual_duration = len(y_full) / sr_f
     
-    st.markdown(f"#### ✂️ 분석 구간 설정 (물리적 실제 길이: {actual_duration:.2f}s)")
+    st.markdown(f"#### ✂️ 분석 구간 설정 (실제 물리적 길이: {actual_duration:.2f}s)")
     
-    # 슬라이더 초기값 설정을 위한 pydub 처리 (디스플레이용)
     l_raw = AudioSegment.from_file(io.BytesIO(audio['bytes']))
     auto_b = detect_nonsilent(l_raw, min_silence_len=100, silence_thresh=-45)
     as_ms, ae_ms = auto_b[0] if auto_b else (0, len(l_raw))
     trim_range = st.slider("구간 조절:", 0.0, float(actual_duration), (float(as_ms/1000), float(ae_ms/1000)), step=0.01)
 
-    # 파형 시각화 (원본 sr_f 적용)
     fig_p, axp = plt.subplots(figsize=(10, 2.2))
     librosa.display.waveshow(y_full, sr=sr_f, ax=axp, color='skyblue', alpha=0.5)
     axp.axvline(x=trim_range[0], color='red', lw=2)
@@ -92,7 +88,6 @@ if audio:
 if st.session_state.get('analysis_done'):
     y_l, sr = st.session_state.final_y_l, st.session_state.current_sr
     
-    # 원어민 TTS 데이터 (sr=None으로 원본 유지)
     tts = gTTS(text=target_word, lang='en'); n_mp3 = io.BytesIO(); tts.write_to_fp(n_mp3); n_mp3.seek(0)
     y_n, sr_n = librosa.load(n_mp3, sr=None)
     
@@ -103,9 +98,11 @@ if st.session_state.get('analysis_done'):
     st.divider()
     st.metric("종합 리듬 점수", f"{score}점")
 
-    # [수정] 절대 시간 비교 (학습자와 원어민 각각의 실제 sr 적용)
+    a_col1, a_col2 = st.columns(2)
+    with a_col1: st.write("🙋 나의 발음"); st.audio(st.session_state.final_audio_l.export(io.BytesIO(), format="wav").getvalue())
+    with a_col2: st.write("🎙️ 원어민 표준"); st.audio(n_mp3.getvalue())
+
     st.write("### 📏 절대 시간 기반 비교 (Actual Time Scale)")
-    [Image of audio sampling rate comparison]
     fig_abs, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 5))
     mt = max(len(y_l)/sr, len(y_n)/sr_n)
     
@@ -120,11 +117,14 @@ if st.session_state.get('analysis_done'):
     
     plt.tight_layout(); st.pyplot(fig_abs)
 
-    # 시간 정규화 오버레이 (리듬 패턴 대조)
     st.write("### 🔄 시간 정규화 리듬 패턴 대조")
-    [Image of signal overlay for pattern matching]
     fig_norm, axn = plt.subplots(figsize=(10, 4))
     x_range = np.linspace(0, 100, 100)
     axn.fill_between(x_range, 0, norm_n, color='gray', alpha=0.2, label='Native Guide')
     axn.plot(x_range, norm_l, color='#ff4b4b', lw=3, label='My Rhythm')
     axn.legend(); st.pyplot(fig_norm)
+
+if st.button("🔄 리셋"):
+    st.session_state.reset_key += 1
+    st.session_state.last_audio_id, st.session_state.analysis_done, st.session_state.final_y_l = None, False, None
+    st.rerun()
